@@ -22,6 +22,11 @@ linux:
   executableName: podium
   # System packages (pacman, deb) need a "homepage" in package.json; see `pnpm dist:pacman`.
   target: [AppImage]
+  # ffprobe-static ships every platform's binary, and a cross-build leaves ffmpeg.exe next to ffmpeg.
+  files:
+    - '!node_modules/ffmpeg-static/ffmpeg.exe*'
+    - '!node_modules/ffprobe-static/bin/darwin/**'
+    - '!node_modules/ffprobe-static/bin/win32/**'
 pacman:
   # These are what Electron actually loads. gpu-screen-recorder does the capturing on Linux.
   depends: [gtk3, nss, libxss, libnotify, alsa-lib, at-spi2-core, libxkbcommon, mesa, libcups]
@@ -30,6 +35,7 @@ win:
   icon: resources/icon.png
   target: [nsis]
   files:
+    - '!node_modules/ffmpeg-static/ffmpeg'
     - '!node_modules/ffprobe-static/bin/darwin/**'
     - '!node_modules/ffprobe-static/bin/linux/**'
 nsis:
@@ -40,5 +46,6 @@ mac:
   category: public.app-category.video
   target: [dmg]
   files:
+    - '!node_modules/ffmpeg-static/ffmpeg.exe*'
     - '!node_modules/ffprobe-static/bin/linux/**'
     - '!node_modules/ffprobe-static/bin/win32/**'

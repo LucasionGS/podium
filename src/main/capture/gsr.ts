@@ -105,7 +105,7 @@ export class GsrBackend implements CaptureBackend {
       return unavailable(
         'GPU Screen Recorder is not installed',
         'Podium uses GPU Screen Recorder to capture your screen with your graphics card’s video encoder. Install it, then check again.',
-        ['yay -S gpu-screen-recorder', `flatpak install flathub ${FLATPAK_ID}`]
+        ['sudo pacman -S gpu-screen-recorder', `flatpak install flathub ${FLATPAK_ID}`]
       )
     }
     const run = async (...args: string[]): Promise<string> => {

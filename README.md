@@ -17,10 +17,20 @@ ready to trim and share.
 
 | Platform | Capture engine |
 | --- | --- |
-| Linux (Wayland or X11) | [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/about/): `yay -S gpu-screen-recorder` on Arch, or `flatpak install flathub com.dec05eba.gpu_screen_recorder` |
+| Linux (Wayland or X11) | [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/about/): `pacman -S gpu-screen-recorder` on Arch, or `flatpak install flathub com.dec05eba.gpu_screen_recorder` |
 | Windows 10/11 | FFmpeg 6+ with `ddagrab` (the bundled build is tried first; otherwise `winget install Gyan.FFmpeg`). Untested so far. |
 
 FFmpeg is bundled for exports; a system FFmpeg with GPU encoders (NVENC, VAAPI, QSV, AMF) is used when present.
+
+## Install
+
+- **Arch Linux** (AUR): `podium` builds the latest release from source, `podium-bin` installs the release's
+  prebuilt package, and `podium-git` builds the latest commit (update it with `yay -Syu --devel`).
+  The PKGBUILDs live in `packaging/aur`; releases are pushed to the AUR by the build workflow, and
+  `packaging/aur/publish.sh <package>` publishes one by hand.
+- **Windows and other Linux distros**: every push to `master` builds a Windows installer, an AppImage and a
+  pacman package; download them from the run's artifacts on the Actions tab. Pushes to `release` publish them
+  as a GitHub Release.
 
 ### How Windows capture works
 

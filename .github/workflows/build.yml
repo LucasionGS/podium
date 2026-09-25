@@ -1,8 +1,9 @@
 name: Build
 
+# Pushes to master and PRs build installers as run artifacts; pushes to release also publish a GitHub Release.
 on:
   push:
-    branches: [release]
+    branches: [master, release]
   pull_request:
   workflow_dispatch:
 
@@ -48,20 +49,20 @@ jobs:
 
   package:
     needs: [test, version]
-    # `version` is skipped outside the release branch; still package for PRs and manual runs.
+    # `version` is skipped outside the release branch; still package for master, PRs and manual runs.
     if: always() && needs.test.result == 'success' && needs.version.result != 'failure'
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
+            name: linux
             # bsdtar (libarchive-tools) is what electron-builder uses to write pacman packages.
             setup: sudo apt-get update && sudo apt-get install -y libarchive-tools
             targets: --linux AppImage pacman
           - os: windows-latest
+            name: windows
             targets: --win nsis
-          - os: macos-latest
-            targets: --mac dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -74,17 +75,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm exec electron-builder ${{ matrix.targets }} --publish never
-        env:
-          # Unsigned macOS builds: skip notarisation instead of failing on it.
-          CSC_IDENTITY_AUTO_DISCOVERY: false
       - uses: actions/upload-artifact@v4
         with:
-          name: podium-${{ matrix.os }}
+          name: podium-${{ matrix.name }}
           path: |
             dist/*.AppImage
             dist/*.pacman
             dist/*.exe
-            dist/*.dmg
           if-no-files-found: error
 
   release:
@@ -113,3 +110,37 @@ jobs:
           generate_release_notes: true
           files: artifacts/*
           fail_on_unmatched_files: true
+
+  # Publishes the release to the AUR: podium builds the tagged source, podium-bin installs the release's
+  # pacman package. Prereleases stay off the AUR. Needs the AUR_SSH_PRIVATE_KEY secret.
+  aur:
+    if: github.ref == 'refs/heads/release' && needs.version.outputs.prerelease == 'false'
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    # makepkg (for .SRCINFO and checksums) only exists on Arch, and refuses to run as root.
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+      - run: pacman -Syu --noconfirm --needed git openssh pacman-contrib
+      - name: Publish podium and podium-bin
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          VERSION: ${{ needs.version.outputs.tag }}
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "::error::Set the AUR_SSH_PRIVATE_KEY secret to publish releases to the AUR."
+            exit 1
+          fi
+          useradd -m builder
+          chown -R builder .
+          install -d -m 700 /home/builder/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > /home/builder/.ssh/aur
+          chmod 600 /home/builder/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org > /home/builder/.ssh/known_hosts
+          chown -R builder /home/builder/.ssh
+          as_builder() { runuser -u builder -- env HOME=/home/builder AUR_SSH_KEY=/home/builder/.ssh/aur "$@"; }
+          as_builder git config --global user.name "Lucasion"
+          as_builder git config --global user.email "ion@ionnet.dev"
+          for pkg in podium podium-bin; do
+            as_builder packaging/aur/publish.sh -y -v "$VERSION" "$pkg"
+          done
