@@ -29,5 +29,6 @@ export const unavailable = (title: string, detail: string, install?: string[]): 
   gpu: null,
   monitors: [],
   audioDevices: [],
-  codecs: []
+  codecs: [],
+  ramBuffer: false
 })

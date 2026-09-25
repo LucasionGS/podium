@@ -123,6 +123,9 @@ function createMainWindow(show: boolean): BrowserWindow {
   })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
+    // Closing wasn't turned into hiding (no tray, or the setting is off): quit. Hidden helper
+    // windows (the Windows audio capture page) must not keep Podium running without a UI.
+    if (!quitting) quit()
   })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) void shell.openExternal(url)
@@ -250,6 +253,8 @@ function registerIpc(): void {
 // ---------------------------------------------------------------- Startup
 
 enableShortcutPortal()
+// Windows only shows notifications for apps with an identity (it matches electron-builder's appId).
+if (process.platform === 'win32') app.setAppUserModelId('dev.ionnet.podium')
 registerFileProtocolScheme()
 
 // Chromium reorders switches in the argv it forwards, so the original is sent along as well.

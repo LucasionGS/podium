@@ -33,6 +33,8 @@ export function RecordingSettings() {
     void updateSettings({ capture: { ...capture, ...patch } })
   const tracks = [settings.audio.desktop, settings.audio.mic].filter(Boolean).length
   const footprint = bufferFootprint(capture, tracks)
+  // The Windows engine keeps its buffer as a ring of files on disk, whatever the setting says.
+  const inMemory = capture.storage === 'ram' && caps?.ramBuffer !== false
   const qualities = QUALITIES.some((q) => q.kbps === capture.bitrateKbps)
     ? QUALITIES
     : [...QUALITIES, { kbps: capture.bitrateKbps, label: `Custom · ${capture.bitrateKbps / 1000} Mbps` }]
@@ -47,7 +49,7 @@ export function RecordingSettings() {
       <Group title="Replay buffer">
         <Row
           label="Keep the last"
-          hint={`Held in ${capture.storage === 'ram' ? 'memory' : 'a file on disk'}: about ${formatBytes(footprint)} at this quality.`}
+          hint={`Held in ${inMemory ? 'memory' : 'files on disk'}: about ${formatBytes(footprint)} at this quality.`}
         >
           <Select
             value={capture.bufferSeconds}
@@ -62,21 +64,23 @@ export function RecordingSettings() {
             ))}
           </Select>
         </Row>
-        <Row
-          label="Store the buffer in"
-          hint="Memory is fastest and spares your SSD. Disk suits long buffers when RAM is tight."
-        >
-          <div className="w-44">
-            <Segmented
-              value={capture.storage}
-              options={[
-                { value: 'ram', label: 'Memory' },
-                { value: 'disk', label: 'Disk' }
-              ]}
-              onChange={(storage) => set({ storage })}
-            />
-          </div>
-        </Row>
+        {caps?.ramBuffer !== false && (
+          <Row
+            label="Store the buffer in"
+            hint="Memory is fastest and spares your SSD. Disk suits long buffers when RAM is tight."
+          >
+            <div className="w-44">
+              <Segmented
+                value={capture.storage}
+                options={[
+                  { value: 'ram', label: 'Memory' },
+                  { value: 'disk', label: 'Disk' }
+                ]}
+                onChange={(storage) => set({ storage })}
+              />
+            </div>
+          </Row>
+        )}
         <Row label="Start buffering when Podium starts">
           <Switch
             label="Start buffering when Podium starts"
@@ -97,7 +101,7 @@ export function RecordingSettings() {
             <option value="">Automatic</option>
             {caps?.monitors.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.id} · {m.width}×{m.height}
+                {m.label ?? m.id} · {m.width}×{m.height}
               </option>
             ))}
           </Select>
@@ -156,13 +160,19 @@ export function RecordingSettings() {
           label={
             caps?.backend === 'gsr'
               ? 'GPU Screen Recorder'
-              : caps?.backend === 'fake'
-                ? 'Test engine'
-                : 'No engine'
+              : caps?.backend === 'ffmpeg'
+                ? 'FFmpeg Desktop Duplication'
+                : caps?.backend === 'fake'
+                  ? 'Test engine'
+                  : 'No engine'
           }
           hint={
             caps?.backend
-              ? [caps.version && `Version ${caps.version}`, caps.gpu && `${caps.gpu.toUpperCase()} GPU`]
+              ? [
+                  caps.version && (caps.backend === 'ffmpeg' ? caps.version : `Version ${caps.version}`),
+                  caps.gpu &&
+                    (caps.backend === 'ffmpeg' ? `Encoder: ${caps.gpu}` : `${caps.gpu.toUpperCase()} GPU`)
+                ]
                   .filter(Boolean)
                   .join(' · ')
               : 'Nothing can record on this system yet.'

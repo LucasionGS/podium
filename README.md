@@ -18,9 +18,17 @@ ready to trim and share.
 | Platform | Capture engine |
 | --- | --- |
 | Linux (Wayland or X11) | [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/about/): `yay -S gpu-screen-recorder` on Arch, or `flatpak install flathub com.dec05eba.gpu_screen_recorder` |
-| Windows | Planned for v0.2 (FFmpeg `ddagrab` + WASAPI loopback) |
+| Windows 10/11 | FFmpeg 6+ with `ddagrab` (the bundled build is tried first; otherwise `winget install Gyan.FFmpeg`). Untested so far. |
 
 FFmpeg is bundled for exports; a system FFmpeg with GPU encoders (NVENC, VAAPI, QSV, AMF) is used when present.
+
+### How Windows capture works
+
+FFmpeg grabs the monitor with Desktop Duplication (`ddagrab`, frames stay on the GPU) and encodes it with
+the first encoder that works on your machine (NVENC, AMF, Quick Sync, then x264) into a ring of one-second
+MPEG-TS segments on disk. FFmpeg has no system-audio loopback on Windows, so a hidden page captures it
+(and the microphone) through Chromium and streams raw PCM to FFmpeg over named pipes, one track each.
+Saving a clip joins the newest segments without re-encoding.
 
 ### Hotkeys on Wayland
 
@@ -50,7 +58,8 @@ so everything except real screen capture can be developed and tested without a G
 src/core      Pure TypeScript, unit tested: gpu-screen-recorder arguments and output parsing, Steam VDF,
               game matching, library reconciliation and queries, export presets, hotkey helpers.
 src/main      Electron main process
-  capture/    CaptureBackend interface; GsrBackend (spawns gsr, talks JSON over its IPC socket);
+  capture/    CaptureBackend interface; GsrBackend (Linux: spawns gsr, talks JSON over its IPC socket);
+              WindowsBackend (FFmpeg ddagrab segment ring + audio via the hidden capture page);
               FakeBackend; CaptureManager (buffer state, restarts, the save → file → notify pipeline)
   games/      Steam library lookup and the process/window poller
   library.ts  JSON index reconciled with the clips folder; the podium-file:// protocol (Range requests

@@ -27,7 +27,8 @@ export class FakeBackend implements CaptureBackend {
         { id: 'default_output', label: 'Default output', kind: 'output' },
         { id: 'default_input', label: 'Default input', kind: 'input' }
       ],
-      codecs: ['h264']
+      codecs: ['h264'],
+      ramBuffer: true
     }
   }
 

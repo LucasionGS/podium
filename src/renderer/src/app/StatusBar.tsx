@@ -67,8 +67,8 @@ export function StatusBar() {
 
       {status.monitor && on && (
         <span className="hidden truncate text-faint lg:inline">
-          {status.monitor.id} · {status.monitor.width}×{status.monitor.height} · {status.fps} fps ·{' '}
-          {codecLabel(status.codec)}
+          {status.monitor.label ?? status.monitor.id} · {status.monitor.width}×{status.monitor.height} ·{' '}
+          {status.fps} fps · {codecLabel(status.codec)}
         </span>
       )}
 

@@ -1,15 +1,38 @@
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { parseRegValue } from '@core/capture/windows'
 import { parseVdf, vdfGet, vdfString } from '@core/games/vdf'
 
+const exec = promisify(execFile)
+
+/** A value under Steam's registry key (Windows), e.g. `SteamPath` or `RunningAppID`. */
+export async function steamRegistry(name: string): Promise<string | number | null> {
+  if (process.platform !== 'win32') return null
+  try {
+    const { stdout } = await exec('reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', name], {
+      timeout: 3000,
+      windowsHide: true
+    })
+    return parseRegValue(stdout, name)
+  } catch {
+    return null
+  }
+}
+
 /** Where Steam keeps its data on each platform (native and Flatpak installs on Linux). */
-function steamRoots(): string[] {
+async function steamRoots(): Promise<string[]> {
   const home = homedir()
+  const registered = await steamRegistry('SteamPath')
   const candidates =
     process.platform === 'win32'
-      ? [join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Steam')]
+      ? [
+          ...(typeof registered === 'string' ? [registered] : []),
+          join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Steam')
+        ]
       : process.platform === 'darwin'
         ? [join(home, 'Library/Application Support/Steam')]
         : [
@@ -17,7 +40,7 @@ function steamRoots(): string[] {
             join(home, '.steam/steam'),
             join(home, '.var/app/com.valvesoftware.Steam/.local/share/Steam')
           ]
-  return candidates.filter((dir) => existsSync(join(dir, 'steamapps')))
+  return [...new Set(candidates)].filter((dir) => existsSync(join(dir, 'steamapps')))
 }
 
 export interface SteamApp {
@@ -31,7 +54,7 @@ let loadedAt = 0
 
 async function loadNames(): Promise<Map<number, string>> {
   const found = new Map<number, string>()
-  for (const root of steamRoots()) {
+  for (const root of await steamRoots()) {
     const libraries = new Set([join(root, 'steamapps')])
     try {
       const folders = parseVdf(await readFile(join(root, 'steamapps', 'libraryfolders.vdf'), 'utf8'))
@@ -73,7 +96,7 @@ export async function steamNames(): Promise<Map<number, string>> {
 
 /** Artwork from Steam's library cache: the small icon (a hash-named jpg) and the wide hero banner. */
 async function art(appId: number): Promise<Pick<SteamApp, 'iconPath' | 'heroPath'>> {
-  for (const root of steamRoots()) {
+  for (const root of await steamRoots()) {
     const dir = join(root, 'appcache', 'librarycache', String(appId))
     const files = await readdir(dir).catch(() => null)
     if (files) {

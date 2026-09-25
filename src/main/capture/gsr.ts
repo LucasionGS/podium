@@ -134,7 +134,8 @@ export class GsrBackend implements CaptureBackend {
       gpu: info.gpuVendor,
       monitors,
       audioDevices: parseAudioDevices(audioText),
-      codecs: info.codecs.length ? info.codecs : ['h264']
+      codecs: info.codecs.length ? info.codecs : ['h264'],
+      ramBuffer: true
     }
   }
 

@@ -58,7 +58,7 @@ export interface ResolvedEncoder extends EncoderInfo {
 
 export type VideoCodec = 'h264' | 'hevc' | 'av1'
 export type BufferStorage = 'ram' | 'disk'
-export type BackendKind = 'gsr' | 'fake'
+export type BackendKind = 'gsr' | 'ffmpeg' | 'fake'
 
 export interface CaptureSettings {
   /** Monitor name (e.g. `DP-2`), or null for the monitor that has focus when the buffer starts. */
@@ -82,6 +82,8 @@ export interface Monitor {
   id: string
   width: number
   height: number
+  /** Friendly name where the OS has one (Windows display names). */
+  label?: string
 }
 
 export interface AudioDevice {
@@ -99,6 +101,8 @@ export interface CaptureCapabilities {
   monitors: Monitor[]
   audioDevices: AudioDevice[]
   codecs: VideoCodec[]
+  /** Whether the buffer can live in memory; the Windows engine always uses a file ring on disk. */
+  ramBuffer: boolean
 }
 
 export type BufferState = 'off' | 'starting' | 'buffering' | 'paused' | 'error' | 'unavailable'
@@ -310,6 +314,10 @@ export const GAMES_IPC = {
   current: 'games:current',
   changed: 'games:changed'
 } as const
+
+/** Windows engine: the hidden audio-capture window sends PCM chunks to main. */
+export const WINCAP_IPC = { pcm: 'wincap:pcm' } as const
+export type CaptureTrack = 'desktop' | 'mic'
 
 export const HOTKEYS_IPC = {
   /** Where the hotkeys are registered and whether it worked. */

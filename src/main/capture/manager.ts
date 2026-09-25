@@ -18,6 +18,7 @@ import { getSettings } from '../settings'
 import type { CaptureBackend } from './Backend'
 import { FakeBackend } from './fake'
 import { GsrBackend } from './gsr'
+import { WindowsBackend } from './windows'
 
 const exec = promisify(execFile)
 /** Restart delays after the engine dies on its own; after the last one we give up and show the error. */
@@ -47,7 +48,13 @@ export class CaptureManager {
   private readonly statusListeners = new Set<(status: CaptureStatus) => void>()
 
   constructor(private readonly games: GameDetector) {
-    this.backend = process.env['PODIUM_BACKEND'] === 'fake' ? new FakeBackend() : new GsrBackend()
+    // gpu-screen-recorder on Linux, FFmpeg (ddagrab) on Windows.
+    this.backend =
+      process.env['PODIUM_BACKEND'] === 'fake'
+        ? new FakeBackend()
+        : process.platform === 'win32'
+          ? new WindowsBackend()
+          : new GsrBackend()
     this.status = {
       state: 'off',
       since: null,

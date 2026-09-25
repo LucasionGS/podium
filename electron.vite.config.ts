@@ -32,10 +32,21 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
-    resolve: { alias }
+    resolve: { alias },
+    build: {
+      rollupOptions: {
+        input: { index: resolve('src/preload/index.ts'), capture: resolve('src/preload/capture.ts') }
+      }
+    }
   },
   renderer: {
     resolve: { alias: { ...alias, '@': resolve('src/renderer/src') } },
-    plugins: [react(), tailwindcss(), fullReloadForLogic()]
+    plugins: [react(), tailwindcss(), fullReloadForLogic()],
+    build: {
+      rollupOptions: {
+        // `capture` is the hidden audio-capture page of the Windows engine.
+        input: { index: resolve('src/renderer/index.html'), capture: resolve('src/renderer/capture.html') }
+      }
+    }
   }
 })

@@ -17,6 +17,10 @@ Stack and look are shared with Edion (`~/development/edion`); copy patterns from
   `hyprctl clients -j` (window), `pgrep -af gpu-screen-recorder`, `hyprctl binds -j` (hotkeys), `dbus-monitor` (notifications).
   Press hotkeys with `ydotool key 56:1 67:1 67:0 56:0` (Alt+F9); `wtype` input never reaches Hyprland binds.
   Stop it with SIGTERM and check that gsr, the binds and `$XDG_RUNTIME_DIR/podium-*` are gone.
+- The Windows engine can't run on Linux. `tests/e2e/windows-ring.test.ts` runs its exact FFmpeg arguments with
+  a test pattern in place of ddagrab and FIFOs in place of the named pipes; keep it passing when touching
+  `src/core/capture/windows.ts`. The hidden audio page (`renderer/capture.html`) can be exercised on Linux with
+  the mic track (loopback is Windows-only in Chromium).
 - `~/.config/Podium` may hold settings from an older prototype; `normalizeSettings` must keep accepting anything.
 
 ## Rules of the codebase

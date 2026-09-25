@@ -3,13 +3,20 @@ import { readdir, readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import type { DetectedGame, GameRule } from '@shared/ipc'
 import { resolveGame, steamAppIdFromEnviron, type SteamProcess, type WindowInfo } from '@core/games/match'
-import { steamApp, steamNames } from './steam'
+import { steamApp, steamNames, steamRegistry } from './steam'
 
 const exec = promisify(execFile)
 const POLL_MS = 4000
 
-/** Processes Steam started a game in (Linux: from /proc/<pid>/environ, readable for our own processes). */
+/**
+ * Processes Steam started a game in. Linux: from /proc/<pid>/environ (readable for our own processes).
+ * Windows: Steam records the running game in the registry.
+ */
 async function steamProcesses(): Promise<SteamProcess[]> {
+  if (process.platform === 'win32') {
+    const appId = await steamRegistry('RunningAppID')
+    return typeof appId === 'number' && appId > 0 ? [{ pid: 0, appId }] : []
+  }
   if (process.platform !== 'linux') return []
   const found: SteamProcess[] = []
   const pids = (await readdir('/proc').catch(() => [] as string[])).filter((p) => /^\d+$/.test(p))
