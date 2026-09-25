@@ -1,7 +1,7 @@
 # Maintainer: Lucasion <ion@ionnet.dev>
 pkgname=podium-git
 _pkgname=podium
-pkgver=0.1.0.r3.gc5e2e97
+pkgver=0.1.0.r5.g2f12869
 pkgrel=1
 pkgdesc='Open-source, local-first game clipping: an instant replay buffer, global hotkeys and a clip library'
 arch=('x86_64')

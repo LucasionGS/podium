@@ -34,7 +34,7 @@ case "$pkg" in podium-git | podium | podium-bin) ;; *) usage ;; esac
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 src="$here/$pkg"
-repo="$(git -C "$here" rev-parse --show-toplevel)"
+repo="$(cd "$here/../.." && pwd)"
 aur_dir="${AUR_DIR:-$HOME/aur/$pkg}"
 aur_remote="${AUR_REMOTE:-ssh://aur@aur.archlinux.org/$pkg.git}"
 key="${AUR_SSH_KEY:-$HOME/.ssh/id_ed25519_aur}"
@@ -60,7 +60,11 @@ field() { sed -n "s/^$1=//p" "$2"; }
 
 if [[ -d "$aur_dir/.git" ]]; then
   say "Updating $aur_dir"
-  aur_git -C "$aur_dir" pull -q --ff-only || die "could not update $aur_dir; resolve it by hand"
+  aur_git -C "$aur_dir" fetch -q origin || die "could not fetch $aur_remote"
+  # Until the first push the package doesn't exist and there's nothing to merge.
+  if git -C "$aur_dir" rev-parse -q --verify origin/master >/dev/null; then
+    git -C "$aur_dir" merge -q --ff-only origin/master || die "could not update $aur_dir; resolve it by hand"
+  fi
 else
   say "Cloning $aur_remote into $aur_dir"
   mkdir -p "$(dirname "$aur_dir")"

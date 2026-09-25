@@ -21,6 +21,6 @@ pkgbase = podium
 	options = !strip
 	options = !debug
 	source = podium-0.1.0.tar.gz::https://github.com/LucasionGS/podium/archive/refs/tags/v0.1.0.tar.gz
-	sha256sums = SKIP
+	sha256sums = 68150f97de7ac69a02c3a8eeba59f10fa7582a500c2587afffce2a70734a06a9
 
 pkgname = podium

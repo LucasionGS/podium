@@ -21,6 +21,6 @@ pkgbase = podium-bin
 	options = !strip
 	options = !debug
 	source = podium-0.1.0.pacman::https://github.com/LucasionGS/podium/releases/download/v0.1.0/podium-0.1.0.pacman
-	sha256sums = SKIP
+	sha256sums = 894db53141234c77859a34e192c4fd191cf039953a471f2666db21653002faed
 
 pkgname = podium-bin

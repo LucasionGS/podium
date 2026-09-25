@@ -18,7 +18,7 @@ options=('!strip' '!debug')
 source=("$_pkgname-$pkgver.pacman::$url/releases/download/v$pkgver/$_pkgname-$pkgver.pacman")
 noextract=("$_pkgname-$pkgver.pacman")
 # publish.sh fills in the checksum of each release.
-sha256sums=('SKIP')
+sha256sums=('894db53141234c77859a34e192c4fd191cf039953a471f2666db21653002faed')
 
 package() {
   # Install its files, minus its pacman metadata; this PKGBUILD provides its own.

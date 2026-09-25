@@ -129,8 +129,9 @@ jobs:
     container: archlinux:base-devel
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      # Before checkout: without git, actions/checkout downloads a tarball instead of a repository.
       - run: pacman -Syu --noconfirm --needed git openssh pacman-contrib
+      - uses: actions/checkout@v4
       - name: Publish podium and podium-bin
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
