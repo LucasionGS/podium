@@ -1,14 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
-import {
-  closeSync,
-  mkdtempSync,
-  openSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-  writeSync
-} from 'node:fs'
+import { createWriteStream, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -65,8 +56,10 @@ describe.skipIf(process.platform !== 'linux')('Windows segment ring (simulated)'
     let stderr = ''
     ffmpeg.stderr.on('data', (d: Buffer) => (stderr += d.toString()))
 
-    // Stream 20 ms chunks in real time, like the capture page does: a tone and silence.
-    const fds = pipes.map((p) => openSync(p, 'w'))
+    // Stream 20 ms chunks in real time, like the capture page does: a tone and silence. Each pipe is fed on
+    // its own, like the engine's pipe servers: FFmpeg may read one input before it opens the next (6.x does),
+    // so opening them one after another from a single thread would deadlock.
+    const streams = pipes.map((p) => createWriteStream(p))
     const frames = SAMPLE_RATE / 50
     let t = 0
     const seconds = 9
@@ -74,8 +67,8 @@ describe.skipIf(process.platform !== 'linux')('Windows segment ring (simulated)'
       const tone = new Float32Array(frames * CHANNELS)
       for (let i = 0; i < frames; i++, t++)
         tone.fill(Math.sin((2 * Math.PI * 440 * t) / SAMPLE_RATE) * 0.3, i * 2, i * 2 + 2)
-      writeSync(fds[0]!, Buffer.from(tone.buffer))
-      writeSync(fds[1]!, Buffer.alloc(frames * CHANNELS * 4))
+      streams[0]!.write(Buffer.from(tone.buffer))
+      streams[1]!.write(Buffer.alloc(frames * CHANNELS * 4))
       await new Promise((r) => setTimeout(r, 20))
     }
 
@@ -110,7 +103,7 @@ describe.skipIf(process.platform !== 'linux')('Windows segment ring (simulated)'
     ])
 
     ffmpeg.stdin.end('q')
-    fds.forEach(closeSync)
+    streams.forEach((s) => s.end())
     await new Promise((r) => ffmpeg.once('exit', r))
     expect(stderr).toBe('')
 
