@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "capture": {
+    "sourceId": null,
+    "width": 1920,
+    "height": 1080,
+    "frameRate": 60,
+    "bitrate": 20000000,
+    "keyframeIntervalSeconds": 1,
+    "codec": "h264",
+    "encoderBackend": "auto",
+    "bufferSeconds": 120,
+    "autoStart": true
+  },
+  "audio": {
+    "systemEnabled": true,
+    "micEnabled": true,
+    "systemDeviceId": null,
+    "micDeviceId": "753efe327399e1d38a606551e8bc99a3b675b345ea83d4ab064fa93190e3f677",
+    "systemGain": 1,
+    "micGain": 1,
+    "micOffsetMs": 0,
+    "bitrate": 128000
+  },
+  "library": {
+    "directory": "/home/ion/Videos/Podium",
+    "clipLengthSeconds": 60,
+    "retentionEnabled": true,
+    "maxLibraryBytes": 107374182400
+  },
+  "hotkeys": {
+    "saveClip": "Alt+F10",
+    "toggleCapture": "Alt+F9",
+    "screenshot": "Alt+F1",
+    "provider": "auto",
+    "allowEvdev": true
+  },
+  "interface": {
+    "startMinimized": false,
+    "minimizeToTray": true,
+    "showNotifications": true
+  },
+  "app": {
+    "launchOnLogin": false,
+    "ffmpegPath": null
+  }
+}

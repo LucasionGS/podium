@@ -1,0 +1,115 @@
+name: Build
+
+on:
+  push:
+    branches: [release]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg xvfb
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      # Electron needs a display server even for hidden windows.
+      - run: xvfb-run -a pnpm test:e2e
+
+  # The release is named after package.json's version; refuse to overwrite one that already exists.
+  version:
+    if: github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.read.outputs.tag }}
+      prerelease: ${{ steps.read.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release v$version already exists. Bump \"version\" in package.json before pushing to release."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  package:
+    needs: [test, version]
+    # `version` is skipped outside the release branch; still package for PRs and manual runs.
+    if: always() && needs.test.result == 'success' && needs.version.result != 'failure'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            # bsdtar (libarchive-tools) is what electron-builder uses to write pacman packages.
+            setup: sudo apt-get update && sudo apt-get install -y libarchive-tools
+            targets: --linux AppImage pacman
+          - os: windows-latest
+            targets: --win nsis
+          - os: macos-latest
+            targets: --mac dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - if: matrix.setup
+        run: ${{ matrix.setup }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm exec electron-builder ${{ matrix.targets }} --publish never
+        env:
+          # Unsigned macOS builds: skip notarisation instead of failing on it.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: podium-${{ matrix.os }}
+          path: |
+            dist/*.AppImage
+            dist/*.pacman
+            dist/*.exe
+            dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    if: github.ref == 'refs/heads/release'
+    needs: [version, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          ls -la
+      # Tag the released commit so the release points at exactly what was built.
+      - run: |
+          git tag "${{ needs.version.outputs.tag }}"
+          git push origin "${{ needs.version.outputs.tag }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Podium ${{ needs.version.outputs.tag }}
+          prerelease: ${{ needs.version.outputs.prerelease }}
+          generate_release_notes: true
+          files: artifacts/*
+          fail_on_unmatched_files: true

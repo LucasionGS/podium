@@ -1,0 +1,44 @@
+appId: dev.ionnet.podium
+productName: Podium
+copyright: Copyright © 2026 Lucas Ion
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: resources/tray.png
+    to: tray.png
+  - from: resources/icon.png
+    to: icon.png
+# Executables cannot run from inside the asar archive.
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+  - node_modules/ffprobe-static/**
+linux:
+  icon: resources/icon.png
+  category: AudioVideo
+  executableName: podium
+  # System packages (pacman, deb) need a "homepage" in package.json; see `pnpm dist:pacman`.
+  target: [AppImage]
+pacman:
+  # These are what Electron actually loads. gpu-screen-recorder does the capturing on Linux.
+  depends: [gtk3, nss, libxss, libnotify, alsa-lib, at-spi2-core, libxkbcommon, mesa, libcups]
+  # electron-builder has no optdepends field; README tells users to install gpu-screen-recorder.
+win:
+  icon: resources/icon.png
+  target: [nsis]
+  files:
+    - '!node_modules/ffprobe-static/bin/darwin/**'
+    - '!node_modules/ffprobe-static/bin/linux/**'
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  icon: resources/icon.png
+  category: public.app-category.video
+  target: [dmg]
+  files:
+    - '!node_modules/ffprobe-static/bin/linux/**'
+    - '!node_modules/ffprobe-static/bin/win32/**'

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2024"/>
+      <stop offset="1" stop-color="#0e0f11"/>
+    </linearGradient>
+    <linearGradient id="step" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#86a0ff"/>
+      <stop offset="1" stop-color="#4f6fe6"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <rect x="16.5" y="16.5" width="479" height="479" rx="111.5" fill="none" stroke="#2a2e34" stroke-width="3"/>
+  <!-- Podium: second, first, third place -->
+  <rect x="96" y="262" width="104" height="146" rx="18" fill="url(#step)" opacity="0.8"/>
+  <rect x="204" y="200" width="104" height="208" rx="18" fill="url(#step)"/>
+  <rect x="312" y="300" width="104" height="108" rx="18" fill="url(#step)" opacity="0.65"/>
+  <!-- The recording dot sits on top of first place -->
+  <circle cx="256" cy="132" r="38" fill="#f0616d"/>
+  <circle cx="256" cy="132" r="56" fill="none" stroke="#f0616d" stroke-width="10" opacity="0.35"/>
+</svg>

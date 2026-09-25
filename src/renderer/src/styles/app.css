@@ -1,0 +1,92 @@
+@import 'tailwindcss';
+
+/* Design tokens, shared with Edion so the two apps feel like one family. */
+@theme {
+  --color-bg: #0e0f11;
+  --color-surface: #16181b;
+  --color-raised: #1d2024;
+  --color-hover: #262a2f;
+  --color-line: #2a2e34;
+  --color-fg: #e6e8eb;
+  --color-muted: #8b929b;
+  --color-faint: #5c636c;
+  --color-accent: #6d8cff;
+  --color-accent-hover: #86a0ff;
+  --color-accent-soft: #6d8cff24;
+  --color-danger: #f0616d;
+  --color-ok: #4cc38a;
+  --color-rec: #f0616d;
+  --color-warn: #e8a13a;
+
+  --font-sans: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  --text-2xs: 0.6875rem;
+  --radius-panel: 8px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-faint);
+}
+
+input,
+textarea,
+.selectable {
+  user-select: text;
+}
+
+/* Native range inputs, tinted to the theme. */
+input[type='range'] {
+  accent-color: var(--color-accent);
+}
+
+@keyframes pulse-rec {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.animate-rec {
+  animation: pulse-rec 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
