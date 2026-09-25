@@ -1,3 +1,4 @@
+import type { NativeImage } from 'electron'
 import type { AudioSettings, BackendKind, CaptureCapabilities, CaptureSettings } from '@shared/ipc'
 
 export interface StartConfig {
@@ -18,6 +19,8 @@ export interface CaptureBackend {
   stop(): Promise<void>
   /** Saves the last `seconds` (or the whole buffer for null) and resolves with the file's path. */
   save(seconds: number | null): Promise<string>
+  /** A still of what the monitor shows now, for the monitor picker; `scratchDir` is writable by the engine. */
+  preview(monitor: string, scratchDir: string): Promise<NativeImage | null>
   /** Called when the engine stops on its own (crash, device lost). */
   onExit(listener: (reason: string) => void): void
 }

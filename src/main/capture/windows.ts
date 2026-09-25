@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session } from 'electron'
+import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, type NativeImage } from 'electron'
 import {
   WINCAP_IPC,
   type AudioDevice,
@@ -68,7 +68,8 @@ function monitors(): Monitor[] {
     id: String(i),
     width: Math.round(d.size.width * d.scaleFactor),
     height: Math.round(d.size.height * d.scaleFactor),
-    label: d.label || `Display ${i + 1}`
+    label: d.label || `Display ${i + 1}`,
+    bounds: d.bounds
   }))
 }
 
@@ -344,6 +345,16 @@ export class WindowsBackend implements CaptureBackend {
       await rm(list, { force: true })
     }
     return output
+  }
+
+  async preview(monitor: string): Promise<NativeImage | null> {
+    const display = screen.getAllDisplays()[Number(monitor)]
+    if (!display) return null
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 480, height: 480 }
+    })
+    return sources.find((s) => s.display_id === String(display.id))?.thumbnail ?? null
   }
 
   onExit(listener: (reason: string) => void): void {

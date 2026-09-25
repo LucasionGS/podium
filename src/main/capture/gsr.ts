@@ -1,10 +1,10 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { app } from 'electron'
+import { app, nativeImage, type NativeImage } from 'electron'
 import type { CaptureCapabilities } from '@shared/ipc'
 import {
   buildGsrArgs,
@@ -216,6 +216,21 @@ export class GsrBackend implements CaptureBackend {
     const path = await request(socketPath(), { name: 'save-replay', data }, SAVE_TIMEOUT_MS)
     if (typeof path !== 'string' || !path) throw new Error('gpu-screen-recorder did not report a file')
     return path
+  }
+
+  /** gsr takes a screenshot when the output is an image; it runs fine next to the replay buffer. */
+  async preview(monitor: string, scratchDir: string): Promise<NativeImage | null> {
+    this.gsr ??= await findGsr()
+    if (!this.gsr) return null
+    await mkdir(scratchDir, { recursive: true })
+    const output = join(scratchDir, `preview-${monitor.replace(/[^\w-]/g, '_')}-${Date.now()}.jpg`)
+    const { file, prefix } = this.gsr.command
+    try {
+      await exec(file, [...prefix, '-w', monitor, '-cursor', 'no', '-o', output], { timeout: 10_000 })
+      return nativeImage.createFromBuffer(await readFile(output))
+    } finally {
+      await rm(output, { force: true })
+    }
   }
 
   onExit(listener: (reason: string) => void): void {

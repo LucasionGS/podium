@@ -7,6 +7,7 @@ import { Switch } from '@/ui/Switch'
 import { codecLabel, formatBytes, formatLength } from '@/lib/format'
 import { refreshCapabilities, updateSettings, useApp } from '@/store/app'
 import { SetupCard } from '@/features/setup/SetupCard'
+import { MonitorPicker } from './MonitorPicker'
 import { Group, Row } from './Row'
 
 const FRAME_RATES = [30, 60, 90, 120, 144, 165, 240]
@@ -91,21 +92,7 @@ export function RecordingSettings() {
       </Group>
 
       <Group title="Video">
-        <Row label="Monitor" hint="Automatic records the monitor that has focus when the buffer starts.">
-          <Select
-            value={capture.monitor ?? ''}
-            onChange={(e) => set({ monitor: e.target.value || null })}
-            className="w-56 flex-none"
-            aria-label="Monitor"
-          >
-            <option value="">Automatic</option>
-            {caps?.monitors.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label ?? m.id} · {m.width}×{m.height}
-              </option>
-            ))}
-          </Select>
-        </Row>
+        <MonitorPicker value={capture.monitor} onChange={(monitor) => set({ monitor })} />
         <Row label="Frame rate">
           <Select
             value={capture.fps}

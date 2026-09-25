@@ -12,6 +12,7 @@ import {
   luaKey,
   luaString
 } from '@core/hotkeys'
+import type { HyprMonitor } from '@core/capture/monitors'
 
 const exec = promisify(execFile)
 
@@ -22,6 +23,16 @@ const runtimeDir = (): string => process.env['XDG_RUNTIME_DIR'] ?? '/tmp'
 const fifoPath = (): string => join(runtimeDir(), `podium-${process.getuid?.() ?? 0}.cmd`)
 /** What we bound, per Hyprland instance, so binds left by a crashed Podium can be removed on the next start. */
 const boundFile = (): string => join(runtimeDir(), `podium-${process.getuid?.() ?? 0}.binds.json`)
+
+/** The compositor's outputs, with position, rotation, model and focus; empty outside Hyprland. */
+export async function hyprlandMonitors(): Promise<HyprMonitor[]> {
+  if (!isHyprland()) return []
+  try {
+    return JSON.parse(await hyprctl('monitors', '-j')) as HyprMonitor[]
+  } catch {
+    return []
+  }
+}
 
 async function hyprctl(...args: string[]): Promise<string> {
   return (await exec('hyprctl', args, { timeout: 3000 })).stdout.trim()

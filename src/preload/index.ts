@@ -41,6 +41,7 @@ const api: PodiumApi = {
     stop: () => ipcRenderer.invoke(CAPTURE_IPC.stop),
     restart: () => ipcRenderer.invoke(CAPTURE_IPC.restart),
     save: (action) => ipcRenderer.invoke(CAPTURE_IPC.save, action),
+    preview: (monitor) => ipcRenderer.invoke(CAPTURE_IPC.preview, monitor),
     onStatus: (cb) => listen(CAPTURE_IPC.statusChanged, cb)
   },
   library: {

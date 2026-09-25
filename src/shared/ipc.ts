@@ -78,12 +78,22 @@ export interface AudioSettings {
   mic: string | null
 }
 
+/** A monitor's place on the desktop, in the desktop's coordinate space (logical pixels). */
+export interface MonitorBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface Monitor {
   id: string
   width: number
   height: number
-  /** Friendly name where the OS has one (Windows display names). */
+  /** Friendly name where the OS has one (Windows display names, the model on Hyprland). */
   label?: string
+  /** Where it sits relative to the other monitors, when the OS tells us. */
+  bounds?: MonitorBounds
 }
 
 export interface AudioDevice {
@@ -283,6 +293,7 @@ export const CAPTURE_IPC = {
   stop: 'capture:stop',
   restart: 'capture:restart',
   save: 'capture:save',
+  preview: 'capture:preview',
   /** Main → renderer. */
   statusChanged: 'capture:status-changed'
 } as const
@@ -370,6 +381,8 @@ export interface PodiumApi {
     stop(): Promise<void>
     restart(): Promise<void>
     save(action: ClipAction): Promise<ClipView | null>
+    /** A small snapshot of what the monitor shows right now (JPEG data URL), or null when it can't be taken. */
+    preview(monitor: string): Promise<string | null>
     onStatus(cb: (status: CaptureStatus) => void): () => void
   }
   library: {

@@ -1,5 +1,3 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { BrowserWindow } from 'electron'
 import {
   CAPTURE_IPC,
@@ -11,8 +9,10 @@ import {
   type Monitor
 } from '@shared/ipc'
 import { clampBuffer } from '@core/capture/gsr'
+import { withHyprlandLayout } from '@core/capture/monitors'
 import { addClip, toView } from '../library'
 import type { GameDetector } from '../games/detect'
+import { hyprlandMonitors } from '../hyprland'
 import { stagingDir } from '../paths'
 import { getSettings } from '../settings'
 import type { CaptureBackend } from './Backend'
@@ -20,22 +20,8 @@ import { FakeBackend } from './fake'
 import { GsrBackend } from './gsr'
 import { WindowsBackend } from './windows'
 
-const exec = promisify(execFile)
 /** Restart delays after the engine dies on its own; after the last one we give up and show the error. */
 const RESTART_DELAYS_MS = [1000, 3000, 10_000]
-
-/** The monitor that has focus right now (Hyprland), so "automatic" records where the user is playing. */
-async function focusedMonitor(): Promise<string | null> {
-  if (!process.env['HYPRLAND_INSTANCE_SIGNATURE']) return null
-  try {
-    const { stdout } = await exec('hyprctl', ['monitors', '-j'], { timeout: 2000 })
-    return (
-      (JSON.parse(stdout) as Array<{ name: string; focused: boolean }>).find((m) => m.focused)?.name ?? null
-    )
-  } catch {
-    return null
-  }
-}
 
 export class CaptureManager {
   private readonly backend: CaptureBackend
@@ -68,8 +54,28 @@ export class CaptureManager {
   }
 
   async getCapabilities(refresh = false): Promise<CaptureCapabilities> {
-    if (!this.capabilities || refresh) this.capabilities = await this.backend.probe()
+    if (!this.capabilities || refresh) {
+      const [caps, hypr] = await Promise.all([this.backend.probe(), hyprlandMonitors()])
+      this.capabilities = { ...caps, monitors: withHyprlandLayout(caps.monitors, hypr) }
+    }
     return this.capabilities
+  }
+
+  /** A JPEG data URL of what the monitor shows now, small enough for the picker. */
+  async preview(monitor: string): Promise<string | null> {
+    const caps = await this.getCapabilities()
+    if (!caps.monitors.some((m) => m.id === monitor)) return null
+    const image = await this.backend.preview(monitor, await stagingDir()).catch((error) => {
+      console.warn('[capture] preview failed:', errorText(error))
+      return null
+    })
+    if (!image || image.isEmpty()) return null
+    const { width, height } = image.getSize()
+    const small =
+      width >= height
+        ? image.resize({ width: Math.min(width, 480) })
+        : image.resize({ height: Math.min(height, 480) })
+    return `data:image/jpeg;base64,${small.toJPEG(75).toString('base64')}`
   }
 
   getStatus(): CaptureStatus {
@@ -118,7 +124,10 @@ export class CaptureManager {
     const known = (id: string | null): Monitor | undefined => caps.monitors.find((m) => m.id === id)
     // The chosen monitor if it's connected, else the focused one, else the first.
     const monitor: Monitor | null =
-      known(settings.capture.monitor) ?? known(await focusedMonitor()) ?? caps.monitors[0] ?? null
+      known(settings.capture.monitor) ??
+      known((await hyprlandMonitors()).find((m) => m.focused)?.name ?? null) ??
+      caps.monitors[0] ??
+      null
     if (!monitor) {
       this.setStatus({ state: 'error', message: 'No monitor to record' })
       return

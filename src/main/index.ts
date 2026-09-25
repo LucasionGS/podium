@@ -239,6 +239,7 @@ function registerIpc(): void {
   ipcMain.handle(CAPTURE_IPC.stop, () => capture.stop())
   ipcMain.handle(CAPTURE_IPC.restart, () => capture.restart())
   ipcMain.handle(CAPTURE_IPC.save, (_e, action: ClipAction) => saveClip(action))
+  ipcMain.handle(CAPTURE_IPC.preview, (_e, monitor: string) => capture.preview(String(monitor)))
 
   ipcMain.handle(GAMES_IPC.current, () => games.game)
   games.onChange((game) => {

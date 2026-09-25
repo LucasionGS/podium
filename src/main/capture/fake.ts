@@ -1,8 +1,14 @@
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { CaptureCapabilities } from '@shared/ipc'
+import { nativeImage, type NativeImage } from 'electron'
+import type { CaptureCapabilities, Monitor } from '@shared/ipc'
 import { runFfmpeg } from '../ffmpeg/jobs'
 import type { CaptureBackend, StartConfig } from './Backend'
+
+const FAKE_MONITORS: Monitor[] = [
+  { id: 'FAKE-1', width: 1280, height: 720, bounds: { x: 0, y: 360, width: 1280, height: 720 } },
+  { id: 'FAKE-2', width: 1920, height: 1080, bounds: { x: 1280, y: 0, width: 1920, height: 1080 } }
+]
 
 /**
  * Pretend replay buffer for tests and machines without a real one (`PODIUM_BACKEND=fake`): saving
@@ -19,10 +25,7 @@ export class FakeBackend implements CaptureBackend {
       problem: null,
       version: 'test',
       gpu: null,
-      monitors: [
-        { id: 'FAKE-1', width: 1280, height: 720 },
-        { id: 'FAKE-2', width: 1920, height: 1080 }
-      ],
+      monitors: FAKE_MONITORS,
       audioDevices: [
         { id: 'default_output', label: 'Default output', kind: 'output' },
         { id: 'default_input', label: 'Default input', kind: 'input' }
@@ -59,6 +62,21 @@ export class FakeBackend implements CaptureBackend {
     args.push('-movflags', '+faststart', output)
     await runFfmpeg({ args })
     return output
+  }
+
+  async preview(monitor: string, scratchDir: string): Promise<NativeImage | null> {
+    const m = FAKE_MONITORS.find((f) => f.id === monitor)
+    if (!m) return null
+    await mkdir(scratchDir, { recursive: true })
+    const output = join(scratchDir, `preview-${m.id}-${Date.now()}.png`)
+    try {
+      await runFfmpeg({
+        args: ['-y', '-f', 'lavfi', '-i', `testsrc2=size=${m.width}x${m.height}`, '-frames:v', '1', output]
+      })
+      return nativeImage.createFromBuffer(await readFile(output))
+    } finally {
+      await rm(output, { force: true })
+    }
   }
 
   onExit(): void {}
