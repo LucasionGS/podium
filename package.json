@@ -1,7 +1,7 @@
 {
   "name": "podium",
   "productName": "Podium",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Open-source, local-first game clipping: an instant replay buffer, global hotkeys and a clip library",
   "homepage": "https://ionnet.dev",
   "main": "./out/main/index.js",
