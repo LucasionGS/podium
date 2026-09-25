@@ -171,13 +171,20 @@ export class HyprlandBinds {
         continue
       }
       const command = this.command(hotkey.action)
+      // Mouse buttons also reach the app under the cursor (Mouse4 stays "back" in a browser); keys don't.
+      const passThrough = bind.key.startsWith('mouse:')
+      const options = passThrough ? ', { non_consuming = true }' : ''
       try {
         const out = lua
           ? await hyprctl(
               'eval',
-              `hl.bind(${luaString(luaKey(bind))}, hl.dsp.exec_cmd(${luaString(command)}))`
+              `hl.bind(${luaString(luaKey(bind))}, hl.dsp.exec_cmd(${luaString(command)})${options})`
             )
-          : await hyprctl('keyword', 'bind', `${bind.mods}, ${bind.key}, exec, ${command}`)
+          : await hyprctl(
+              'keyword',
+              passThrough ? 'bindn' : 'bind',
+              `${bind.mods}, ${bind.key}, exec, ${command}`
+            )
         if (out !== 'ok') throw new Error(out)
         this.bound.push({ id: hotkey.id, ...bind })
         this.saveBound()

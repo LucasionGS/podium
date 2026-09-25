@@ -1,7 +1,8 @@
 import { app, globalShortcut, ipcMain } from 'electron'
 import { HOTKEYS_IPC, type ClipAction, type Hotkey, type HotkeyStatus } from '@shared/ipc'
-import { actionToArgs } from '@core/hotkeys'
+import { acceleratorKey, actionToArgs, isMouseAccelerator, planShortcuts } from '@core/hotkeys'
 import { HyprlandBinds, isHyprland } from './hyprland'
+import { MouseHook } from './mouseHook'
 
 const isWayland = (): boolean => process.platform === 'linux' && Boolean(process.env['WAYLAND_DISPLAY'])
 
@@ -29,6 +30,9 @@ export class Hotkeys {
   private suspended = false
   private active = false
   private readonly hyprland: HyprlandBinds | null
+  /** Accelerators registered with the OS (or the mouse hook) right now; not used on Hyprland. */
+  private readonly registered = new Set<string>()
+  private readonly mouse = new MouseHook((accelerator) => this.press(accelerator))
   private applying: Promise<void> = Promise.resolve()
 
   constructor(private readonly fire: (action: ClipAction) => void) {
@@ -48,24 +52,64 @@ export class Hotkeys {
     // Serialised: a quick series of changes must not interleave bind and unbind calls.
     this.applying = this.applying.then(async () => {
       const list = this.suspended ? [] : this.hotkeys
+      const plan = planShortcuts(this.registered, list)
+      const failed = plan.duplicates.map((id) => ({
+        id,
+        reason: 'Another Podium hotkey already uses this key'
+      }))
       if (this.hyprland) {
-        this.failed = await this.hyprland.apply(list)
+        const unique = list.filter((h) => !plan.duplicates.includes(h.id))
+        this.failed = [...failed, ...(await this.hyprland.apply(unique))]
         return
       }
-      globalShortcut.unregisterAll()
-      this.failed = []
-      for (const hotkey of list) {
-        if (!hotkey.accelerator) continue
-        let ok = false
-        try {
-          ok = globalShortcut.register(hotkey.accelerator, () => this.fire(hotkey.action))
-        } catch {
-          ok = false
-        }
-        if (!ok) this.failed.push({ id: hotkey.id, reason: 'Another app is already using this key' })
+      // Only the keys that changed: Windows can refuse a key Podium released a moment ago.
+      for (const accelerator of plan.unregister) {
+        if (!isMouseAccelerator(accelerator)) globalShortcut.unregister(accelerator)
+        this.registered.delete(accelerator)
       }
+      if (![...this.registered].some(isMouseAccelerator)) this.mouse.stop()
+      for (const accelerator of plan.register) {
+        const reason = await this.registerKey(accelerator)
+        if (!reason) continue
+        console.warn(`[hotkeys] ${accelerator}: ${reason}`)
+        for (const hotkey of list)
+          if (hotkey.accelerator && acceleratorKey(hotkey.accelerator) === acceleratorKey(accelerator))
+            failed.push({ id: hotkey.id, reason })
+      }
+      this.failed = failed
     })
     return this.applying.catch((error) => console.error('[hotkeys]', error))
+  }
+
+  /** A registered key or button was pressed. Looked up now, so changing what a key does needs no re-registering. */
+  private press(accelerator: string): void {
+    if (this.suspended) return
+    const hotkey = this.hotkeys.find(
+      (h) => h.accelerator && acceleratorKey(h.accelerator) === acceleratorKey(accelerator)
+    )
+    if (hotkey) this.fire(hotkey.action)
+  }
+
+  /** Registers one key (with the OS) or mouse button (with the hook); returns why it failed, or null. */
+  private async registerKey(accelerator: string): Promise<string | null> {
+    if (isMouseAccelerator(accelerator)) {
+      if (!MouseHook.supported()) return 'Mouse buttons can’t be hotkeys on this desktop'
+      const reason = await this.mouse.start()
+      if (!reason) this.registered.add(accelerator)
+      return reason
+    }
+    try {
+      const ok = globalShortcut.register(accelerator, () => this.press(accelerator))
+      if (ok) {
+        this.registered.add(accelerator)
+        return null
+      }
+    } catch {
+      return "Podium can't use this key combination"
+    }
+    return process.platform === 'win32'
+      ? 'Another app is already using this key (often the NVIDIA, AMD or Xbox Game Bar overlay)'
+      : 'Another app is already using this key'
   }
 
   /** While a new binding is being recorded, the old ones must not fire (or, on Hyprland, swallow the keys). */
@@ -78,6 +122,8 @@ export class Hotkeys {
   stop(): void {
     this.hyprland?.stop()
     if (this.active && !this.hyprland) globalShortcut.unregisterAll()
+    this.mouse.stop()
+    this.registered.clear()
     this.active = false
   }
 

@@ -29,8 +29,14 @@ FFmpeg is bundled for exports; a system FFmpeg with GPU encoders (NVENC, VAAPI, 
   The PKGBUILDs live in `packaging/aur`; releases are pushed to the AUR by the build workflow, and
   `packaging/aur/publish.sh <package>` publishes one by hand.
 - **Windows and other Linux distros**: every push to `master` builds a Windows installer, an AppImage and a
-  pacman package; download them from the run's artifacts on the Actions tab. Pushes to `release` publish them
-  as a GitHub Release.
+  pacman package; download them from the run's artifacts on the Actions tab.
+
+### Releasing
+
+Bump `version` in `package.json` and push to `master`. When that version has no GitHub Release yet, the
+build workflow tags the commit, publishes the installers as a GitHub Release and updates `podium` and
+`podium-bin` on the AUR. A version with a `-` (`0.3.0-beta.1`) becomes a GitHub prerelease and stays off
+the AUR.
 
 ### How Windows capture works
 

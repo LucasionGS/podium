@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, Copy, X } from 'lucide-react'
 import type { Hotkey } from '@shared/ipc'
-import { acceleratorFromKey } from '@core/hotkeys'
+import { acceleratorFromKey, acceleratorFromMouse, DOM_MOUSE_BUTTONS } from '@core/hotkeys'
 import { Select } from '@/ui/Field'
 import { formatLength } from '@/lib/format'
 import { updateSettings, useApp } from '@/store/app'
@@ -30,9 +30,20 @@ function Recorder({
       onChange(accelerator)
       setRecording(false)
     }
+    // Side buttons (Mouse4/Mouse5); other clicks keep working normally.
+    const onMouse = (e: MouseEvent): void => {
+      const accelerator = acceleratorFromMouse(e, DOM_MOUSE_BUTTONS)
+      if (!accelerator) return
+      e.preventDefault()
+      e.stopPropagation()
+      onChange(accelerator)
+      setRecording(false)
+    }
     window.addEventListener('keydown', onKey, true)
+    window.addEventListener('mousedown', onMouse, true)
     return () => {
       window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('mousedown', onMouse, true)
       window.podium.hotkeys.suspend(false)
     }
   }, [recording, onChange])
@@ -46,7 +57,7 @@ function Recorder({
           recording ? 'border-accent bg-accent-soft text-accent' : 'border-line bg-raised hover:border-faint'
         }`}
       >
-        {recording ? 'Press keys…' : (value ?? 'Not set')}
+        {recording ? 'Press keys or a mouse button…' : (value ?? 'Not set')}
       </button>
       {value && (
         <button

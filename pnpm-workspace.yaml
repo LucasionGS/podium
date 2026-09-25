@@ -3,3 +3,5 @@ allowBuilds:
   electron-winstaller: false
   esbuild: true
   ffmpeg-static: true
+  # Ships prebuilt N-API binaries; its build script would only compile a fallback.
+  uiohook-napi: false

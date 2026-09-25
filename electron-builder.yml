@@ -12,6 +12,9 @@ extraResources:
     to: tray.png
   - from: resources/icon.png
     to: icon.png
+# The only native module (uiohook-napi) ships prebuilt N-API binaries that work in any Electron, so don't
+# compile it again (that would need a C toolchain and X11 headers on every build machine).
+npmRebuild: false
 # Executables cannot run from inside the asar archive.
 asarUnpack:
   - node_modules/ffmpeg-static/**

@@ -1,19 +1,20 @@
 name: Build
 
-# Pushes to master and PRs build installers as run artifacts; pushes to release also publish a GitHub Release.
+# Every push to master and every PR builds the installers as run artifacts. When master's package.json has a
+# version that isn't released yet, the push also publishes it: a GitHub Release and the AUR packages.
 on:
   push:
-    branches: [master, release]
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
-# A newer push to the same branch replaces a build still running; releases always finish.
+# A newer push to a PR replaces its build still running. Master runs always finish: any of them may be a release.
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -33,13 +34,14 @@ jobs:
       # Electron needs a display server even for hidden windows.
       - run: xvfb-run -a pnpm test:e2e
 
-  # The release is named after package.json's version; refuse to overwrite one that already exists.
+  # Releases are named after package.json's version: a version without a GitHub Release yet gets one.
   version:
-    if: github.ref == 'refs/heads/release'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.read.outputs.tag }}
       prerelease: ${{ steps.read.outputs.prerelease }}
+      release: ${{ steps.read.outputs.release }}
     steps:
       - uses: actions/checkout@v4
       - id: read
@@ -48,15 +50,18 @@ jobs:
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           case "$version" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
           if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::Release v$version already exists. Bump \"version\" in package.json before pushing to release."
-            exit 1
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "v$version is already released; bump \"version\" in package.json to publish a new one."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Releasing v$version."
           fi
         env:
           GH_TOKEN: ${{ github.token }}
 
   package:
     needs: [test, version]
-    # `version` is skipped outside the release branch; still package for master, PRs and manual runs.
+    # `version` is skipped for PRs and other branches; they still get packaged.
     if: always() && needs.test.result == 'success' && needs.version.result != 'failure'
     strategy:
       fail-fast: false
@@ -93,7 +98,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.ref == 'refs/heads/release'
+    if: needs.version.outputs.release == 'true'
     needs: [version, package]
     runs-on: ubuntu-latest
     steps:
@@ -104,12 +109,18 @@ jobs:
           merge-multiple: true
       - run: |
           cd artifacts
-          sha256sum * > SHA256SUMS.txt
+          sha256sum -- * > SHA256SUMS.txt
           ls -la
-      # Tag the released commit so the release points at exactly what was built.
+      # Tag the released commit so the release points at exactly what was built. A re-run after a failed
+      # release finds the tag already there.
       - run: |
-          git tag "${{ needs.version.outputs.tag }}"
-          git push origin "${{ needs.version.outputs.tag }}"
+          tag="${{ needs.version.outputs.tag }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "$tag is already tagged"
+          else
+            git tag "$tag"
+            git push origin "$tag"
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
@@ -122,7 +133,7 @@ jobs:
   # Publishes the release to the AUR: podium builds the tagged source, podium-bin installs the release's
   # pacman package. Prereleases stay off the AUR. Needs the AUR_SSH_PRIVATE_KEY secret.
   aur:
-    if: github.ref == 'refs/heads/release' && needs.version.outputs.prerelease == 'false'
+    if: needs.version.outputs.release == 'true' && needs.version.outputs.prerelease == 'false'
     needs: [version, release]
     runs-on: ubuntu-latest
     # makepkg (for .SRCINFO and checksums) only exists on Arch, and refuses to run as root.

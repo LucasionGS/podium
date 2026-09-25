@@ -1,4 +1,4 @@
-import type { ClipAction } from '@shared/ipc'
+import type { ClipAction, Hotkey } from '@shared/ipc'
 
 const MODS: Record<string, string> = {
   alt: 'ALT',
@@ -35,7 +35,40 @@ const KEYS: Record<string, string> = {
   left: 'Left',
   right: 'Right',
   plus: 'plus',
-  numadd: 'KP_Add'
+  numadd: 'KP_Add',
+  // Side buttons: BTN_SIDE and BTN_EXTRA.
+  mouse4: 'mouse:275',
+  mouse5: 'mouse:276'
+}
+
+/** `Mouse4`/`Mouse5` (optionally with modifiers): Podium's own names, which Electron's globalShortcut doesn't know. */
+export const isMouseAccelerator = (accelerator: string): boolean =>
+  /^mouse[45]$/i.test(accelerator.split('+').pop() ?? '')
+
+/** Side buttons as the browser numbers them (`MouseEvent.button`). */
+export const DOM_MOUSE_BUTTONS: Record<number, string> = { 3: 'Mouse4', 4: 'Mouse5' }
+/** Side buttons as the input hook (libuiohook) numbers them. */
+export const HOOK_MOUSE_BUTTONS: Record<number, string> = { 4: 'Mouse4', 5: 'Mouse5' }
+
+interface Modifiers {
+  altKey: boolean
+  ctrlKey: boolean
+  shiftKey: boolean
+  metaKey: boolean
+}
+
+const withModifiers = (e: Modifiers, key: string): string =>
+  [e.ctrlKey && 'Control', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super', key]
+    .filter(Boolean)
+    .join('+')
+
+/** Accelerator for a mouse button press, or null for buttons that can't be hotkeys (left, right, middle). */
+export function acceleratorFromMouse(
+  e: Modifiers & { button: number },
+  buttons: Record<number, string>
+): string | null {
+  const name = buttons[e.button]
+  return name ? withModifiers(e, name) : null
 }
 
 /** Electron accelerator (`Alt+Shift+F9`) → Hyprland bind fields (`ALT SHIFT`, `F9`). */
@@ -71,14 +104,7 @@ export function actionFromArgs(argv: string[]): ClipAction | null {
 }
 
 /** Accelerator from a keydown event, or null while only modifiers are held. */
-export function acceleratorFromKey(e: {
-  key: string
-  code: string
-  altKey: boolean
-  ctrlKey: boolean
-  shiftKey: boolean
-  metaKey: boolean
-}): string | null {
+export function acceleratorFromKey(e: Modifiers & { key: string; code: string }): string | null {
   if (['Alt', 'Control', 'Shift', 'Meta', 'AltGraph', 'OS'].includes(e.key)) return null
   let key: string
   if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3)
@@ -109,13 +135,45 @@ export function acceleratorFromKey(e: {
     if (!name) return null
     key = name
   }
-  const mods = [
-    e.ctrlKey && 'Control',
-    e.altKey && 'Alt',
-    e.shiftKey && 'Shift',
-    e.metaKey && 'Super'
-  ].filter(Boolean)
+  return withModifiers(e, key)
+}
+
+/** Same key combination, however it's spelled: `Ctrl+Alt+X` and `Alt+Control+x` give the same result. */
+export function acceleratorKey(accelerator: string): string {
+  const parts = accelerator.split('+').filter(Boolean)
+  const key = (parts.pop() ?? '').toLowerCase()
+  const mods = [...new Set(parts.map((p) => MODS[p.toLowerCase()] ?? p.toUpperCase()))].sort()
   return [...mods, key].join('+')
+}
+
+export interface ShortcutPlan {
+  /** Registered accelerators no hotkey uses any more. */
+  unregister: string[]
+  /** Accelerators to register now (already registered ones stay as they are). */
+  register: string[]
+  /** Hotkeys whose key another hotkey already has; the first one listed keeps it. */
+  duplicates: string[]
+}
+
+/**
+ * What to change so exactly the wanted hotkeys are registered. Keys that stay are left alone: on Windows,
+ * releasing a key and taking it straight back can fail as if another app had it.
+ */
+export function planShortcuts(registered: Iterable<string>, hotkeys: Hotkey[]): ShortcutPlan {
+  const wanted = new Map<string, string>()
+  const duplicates: string[] = []
+  for (const hotkey of hotkeys) {
+    if (!hotkey.accelerator) continue
+    const key = acceleratorKey(hotkey.accelerator)
+    if (wanted.has(key)) duplicates.push(hotkey.id)
+    else wanted.set(key, hotkey.accelerator)
+  }
+  const current = new Map([...registered].map((a) => [acceleratorKey(a), a]))
+  return {
+    unregister: [...current].filter(([key]) => !wanted.has(key)).map(([, a]) => a),
+    register: [...wanted].filter(([key]) => !current.has(key)).map(([, a]) => a),
+    duplicates
+  }
 }
 
 /** One line written to Podium's command pipe by a compositor bind: `clip 30` or `bookmark`. */
