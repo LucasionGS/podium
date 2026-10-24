@@ -11,7 +11,9 @@ ready to trim and share.
 - **Game detection**: Steam and Proton games are recognised automatically, other fullscreen games by window.
 - **Separate audio tracks** for desktop audio and your mic, so you can turn yourself down per clip.
 - **Trim and export**: frame-exact trimming, and presets for Discord (under 10 MB), high quality, separate tracks and GIF.
-- **Everything stays on your machine.** No account, no uploads.
+- **Uploads, on your terms**: send clips to your own server (by hand, or automatically as soon as they're saved) and
+  get a link to share. Servers speak the open [Podium upload protocol](docs/upload-protocol.md).
+- **Everything stays on your machine** unless you upload it. No account, no cloud of ours.
 
 ## Requirements
 
@@ -81,6 +83,8 @@ src/main      Electron main process
   library.ts  JSON index reconciled with the clips folder; the podium-file:// protocol (Range requests
               for <video>), thumbnails, filmstrips and per-track audio for the player
   export.ts   Export queue (FFmpeg with GPU encoders, falling back to x264)
+  upload/     UploadProtocol interface, the Podium protocol client and the upload queue (auto-upload, links)
+  secrets.ts  Upload tokens, encrypted with the OS keyring (safeStorage) and kept out of settings.json
   hotkeys.ts, tray.ts, autostart.ts
 src/shared    Typed IPC channels and the preload API
 src/renderer  React 19 + Tailwind 4 + zustand: sidebar + clip grid, player with trim bar and
@@ -90,6 +94,16 @@ src/renderer  React 19 + Tailwind 4 + zustand: sidebar + clip grid, player with 
 Saving a clip: hotkey → `CaptureManager.save` → gsr `save-replay` over the IPC socket (answered once the
 file is written to `<library>/.podium`) → the file is moved to `<library>/<Game>/<Game> <date>.mp4`,
 indexed, thumbnailed → sound + notification.
+
+## Uploading to your own server
+
+Podium uploads to any server that speaks the [Podium upload protocol](docs/upload-protocol.md): plain HTTPS and
+JSON, with resumable chunked uploads. [`docs/upload-reference-server.ts`](docs/upload-reference-server.ts) is a
+complete server without dependencies. Run it to try uploads, or use it as a starting point for your own:
+
+```sh
+PODIUM_UPLOAD_TOKEN=secret node docs/upload-reference-server.ts   # then add http://localhost:8787 in Settings → Uploads
+```
 
 ## Licence
 

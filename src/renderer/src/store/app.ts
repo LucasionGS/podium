@@ -19,7 +19,7 @@ export type Route =
 /** Sidebar sections: every clip, favourites, bookmarks to review, one game, or clips without a game. */
 export type LibraryFilter = 'all' | 'favorites' | 'bookmarks' | 'desktop' | { gameId: string }
 
-export type SettingsTab = 'recording' | 'audio' | 'hotkeys' | 'library' | 'games' | 'general'
+export type SettingsTab = 'recording' | 'audio' | 'hotkeys' | 'library' | 'uploads' | 'games' | 'general'
 
 interface AppState {
   route: Route

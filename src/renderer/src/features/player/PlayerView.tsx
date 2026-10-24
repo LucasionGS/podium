@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import {
   ArrowLeft,
   Bookmark,
+  CloudUpload,
+  Copy,
   Download,
+  ExternalLink,
   FolderOpen,
   Mic,
   Pause,
@@ -16,15 +19,18 @@ import {
   VolumeX,
   X
 } from 'lucide-react'
-import type { ClipView, ExportPreset, Filmstrip } from '@shared/ipc'
+import type { ClipView, ExportPreset, Filmstrip, UploadJobState } from '@shared/ipc'
 import { PRESETS } from '@core/export/presets'
+import { resolveTarget } from '@core/upload/targets'
 import { Button } from '@/ui/Button'
+import { Select } from '@/ui/Field'
 import { IconButton } from '@/ui/IconButton'
 import { formatBytes, formatDuration, formatPrecise } from '@/lib/format'
-import { openLibrary } from '@/store/app'
+import { navigate, openLibrary, useApp } from '@/store/app'
 import { startExport, useExports } from '@/store/exports'
 import { confirm, toast } from '@/store/feedback'
 import { useLibrary } from '@/store/library'
+import { isActive, uploadClip, useUploads } from '@/store/uploads'
 import { deleteClips, exportClip, renameClip, toggleFavorite } from '@/features/library/clipActions'
 import { TrimBar } from './TrimBar'
 import { useTrackMixer } from './useTrackMixer'
@@ -355,6 +361,8 @@ function SidePanel({
         </div>
       </Section>
 
+      <UploadSection clip={clip} edited={edited} />
+
       <Section title="Export">
         <div className="flex flex-col gap-1">
           {(Object.keys(PRESETS) as ExportPreset[]).map((preset) => (
@@ -407,6 +415,119 @@ function SidePanel({
         <p className="mt-3 text-2xs leading-relaxed break-all text-faint select-text">{clip.path}</p>
       </Section>
     </aside>
+  )
+}
+
+const UPLOAD_STATES: Record<UploadJobState['state'], string> = {
+  queued: 'Waiting',
+  preparing: 'Preparing',
+  uploading: 'Uploading',
+  finishing: 'Finishing',
+  done: 'Uploaded',
+  error: 'Failed',
+  cancelled: 'Cancelled'
+}
+
+function UploadSection({ clip, edited }: { clip: ClipView; edited: boolean }) {
+  const upload = useApp((s) => s.settings!.upload)
+  const allJobs = useUploads((s) => s.jobs)
+  const jobs = useMemo(() => allJobs.filter((j) => j.clipId === clip.id && isActive(j)), [allJobs, clip.id])
+  const [picked, setPicked] = useState<string | null>(null)
+  const target = resolveTarget(upload, picked) ?? resolveTarget(upload)
+
+  if (!target) {
+    return (
+      <Section title="Upload">
+        <p className="text-xs leading-relaxed text-muted">
+          Upload clips to your own server and share a link.
+        </p>
+        <Button className="mt-2.5" onClick={() => navigate({ view: 'settings', tab: 'uploads' })}>
+          <CloudUpload size={13} />
+          Set up uploads
+        </Button>
+      </Section>
+    )
+  }
+
+  const busy = jobs.some((j) => j.targetId === target.id)
+  const again = clip.uploads.some((u) => u.targetId === target.id)
+  return (
+    <Section title="Upload">
+      <div className="flex flex-col gap-2">
+        {upload.targets.length > 1 && (
+          <Select value={target.id} onChange={(e) => setPicked(e.target.value)} aria-label="Upload target">
+            {upload.targets.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        <Button disabled={busy} onClick={() => void uploadClip(clip, target.id)} className="justify-center">
+          <CloudUpload size={13} />
+          {again ? 'Upload again' : upload.targets.length > 1 ? 'Upload' : `Upload to ${target.name}`}
+        </Button>
+        {edited && (
+          <p className="text-2xs leading-relaxed text-faint">
+            Uploads the whole clip. Save the trim as a new clip first to upload just the selection.
+          </p>
+        )}
+      </div>
+      {jobs.map((job) => (
+        <div key={job.id} className="mt-2 rounded-md border border-line bg-bg p-2.5">
+          <div className="flex items-center gap-2 text-2xs">
+            <span className="min-w-0 flex-1 truncate">
+              {UPLOAD_STATES[job.state]} · {job.targetName}
+            </span>
+            <span className="text-muted tabular-nums">{Math.round(job.progress * 100)}%</span>
+            <button
+              className="text-faint hover:text-fg"
+              aria-label="Cancel upload"
+              onClick={() => window.podium.uploads.cancel(job.id)}
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <div className="mt-1.5 h-1 overflow-hidden rounded bg-line">
+            <div
+              className={`h-full bg-accent transition-[width] ${job.state === 'preparing' || job.state === 'finishing' ? 'animate-pulse' : ''}`}
+              style={{ width: `${job.state === 'finishing' ? 100 : job.progress * 100}%` }}
+            />
+          </div>
+          {job.message && <p className="mt-1.5 text-2xs leading-relaxed text-warn">{job.message}</p>}
+        </div>
+      ))}
+      {clip.uploads.length > 0 && (
+        <ul className="mt-2.5 flex flex-col gap-1">
+          {[...clip.uploads].reverse().map((u) => (
+            <li
+              key={`${u.targetId}:${u.remoteId}:${u.uploadedAt}`}
+              className="flex items-center gap-1 text-2xs"
+            >
+              <span className="min-w-0 flex-1 truncate text-muted" title={u.url ?? undefined}>
+                {u.targetName} · {new Date(u.uploadedAt).toLocaleDateString()}
+              </span>
+              {u.url && (
+                <>
+                  <IconButton
+                    label="Copy link"
+                    onClick={() => {
+                      window.podium.app.copyText(u.url!)
+                      toast('Link copied', 'success')
+                    }}
+                  >
+                    <Copy size={12} />
+                  </IconButton>
+                  <IconButton label="Open link" onClick={() => window.podium.app.openExternal(u.url!)}>
+                    <ExternalLink size={12} />
+                  </IconButton>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   )
 }
 

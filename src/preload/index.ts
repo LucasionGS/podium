@@ -7,6 +7,7 @@ import {
   IPC,
   LIBRARY_IPC,
   SETTINGS_IPC,
+  UPLOAD_IPC,
   type PodiumApi
 } from '@shared/ipc'
 
@@ -70,6 +71,15 @@ const api: PodiumApi = {
   hotkeys: {
     status: () => ipcRenderer.invoke(HOTKEYS_IPC.status),
     suspend: (suspended) => ipcRenderer.send(HOTKEYS_IPC.suspend, suspended)
+  },
+  uploads: {
+    start: (clipId, targetId) => ipcRenderer.invoke(UPLOAD_IPC.start, clipId, targetId),
+    cancel: (id) => ipcRenderer.send(UPLOAD_IPC.cancel, id),
+    list: () => ipcRenderer.invoke(UPLOAD_IPC.list),
+    onUpdate: (cb) => listen(UPLOAD_IPC.update, cb),
+    test: (target, token) => ipcRenderer.invoke(UPLOAD_IPC.test, target, token),
+    setToken: (targetId, token) => ipcRenderer.invoke(UPLOAD_IPC.setToken, targetId, token),
+    tokens: () => ipcRenderer.invoke(UPLOAD_IPC.tokens)
   },
   pathForFile: (file) => webUtils.getPathForFile(file)
 }

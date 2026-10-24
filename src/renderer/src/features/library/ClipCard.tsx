@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bookmark, Star } from 'lucide-react'
+import { Bookmark, CloudCheck, Star } from 'lucide-react'
 import type { ClipView } from '@shared/ipc'
 import { openContextMenu } from '@/ui/ContextMenu'
 import { formatBytes, formatDuration, formatRelative } from '@/lib/format'
@@ -69,6 +69,14 @@ export function ClipCard({ clip, showGame }: { clip: ClipView; showGame: boolean
             preload="auto"
             className="absolute inset-0 size-full object-cover"
           />
+        )}
+        {clip.uploads.length > 0 && (
+          <span
+            className="absolute bottom-1.5 left-1.5 rounded bg-black/75 p-0.5 text-white"
+            title={`Uploaded to ${[...new Set(clip.uploads.map((u) => u.targetName))].join(', ')}`}
+          >
+            <CloudCheck size={12} />
+          </span>
         )}
         <span className="absolute right-1.5 bottom-1.5 rounded bg-black/75 px-1.5 py-0.5 text-2xs font-medium text-white tabular-nums">
           {formatDuration(clip.duration)}

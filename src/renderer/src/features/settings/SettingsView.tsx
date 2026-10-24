@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Gamepad2, HardDrive, Keyboard, Settings2, Video, Volume2 } from 'lucide-react'
+import { CloudUpload, Gamepad2, HardDrive, Keyboard, Settings2, Video, Volume2 } from 'lucide-react'
 import { navigate, type SettingsTab } from '@/store/app'
 import { AudioSettings } from './AudioSettings'
 import { GamesSettings } from './GamesSettings'
@@ -7,12 +7,14 @@ import { GeneralSettings } from './GeneralSettings'
 import { HotkeySettings } from './HotkeySettings'
 import { LibrarySettings } from './LibrarySettings'
 import { RecordingSettings } from './RecordingSettings'
+import { UploadSettings } from './UploadSettings'
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: ReactNode }> = [
   { id: 'recording', label: 'Recording', icon: <Video size={15} /> },
   { id: 'audio', label: 'Audio', icon: <Volume2 size={15} /> },
   { id: 'hotkeys', label: 'Hotkeys', icon: <Keyboard size={15} /> },
   { id: 'library', label: 'Library', icon: <HardDrive size={15} /> },
+  { id: 'uploads', label: 'Uploads', icon: <CloudUpload size={15} /> },
   { id: 'games', label: 'Games', icon: <Gamepad2 size={15} /> },
   { id: 'general', label: 'General', icon: <Settings2 size={15} /> }
 ]
@@ -43,6 +45,7 @@ export function SettingsView({ tab }: { tab: SettingsTab }) {
           {tab === 'audio' && <AudioSettings />}
           {tab === 'hotkeys' && <HotkeySettings />}
           {tab === 'library' && <LibrarySettings />}
+          {tab === 'uploads' && <UploadSettings />}
           {tab === 'games' && <GamesSettings />}
           {tab === 'general' && <GeneralSettings />}
         </div>

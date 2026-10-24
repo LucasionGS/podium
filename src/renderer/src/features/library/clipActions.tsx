@@ -1,4 +1,4 @@
-import { Download, FolderOpen, Pencil, Play, Star, Trash2 } from 'lucide-react'
+import { CloudUpload, Download, FolderOpen, Link, Pencil, Play, Star, Trash2 } from 'lucide-react'
 import type { ClipView, ExportPreset } from '@shared/ipc'
 import { PRESETS } from '@core/export/presets'
 import { sanitizeFileName } from '@core/library/naming'
@@ -6,6 +6,7 @@ import type { MenuItem } from '@/ui/ContextMenu'
 import { navigate, openLibrary, useApp } from '@/store/app'
 import { startExport } from '@/store/exports'
 import { confirm, promptText, toast } from '@/store/feedback'
+import { latestLink, uploadClip } from '@/store/uploads'
 
 export async function renameClip(clip: ClipView): Promise<void> {
   const title = await promptText({
@@ -54,6 +55,42 @@ export async function exportClip(
   toast(`Exporting “${clip.title}”…`)
 }
 
+function uploadItems(clip: ClipView): MenuItem[] {
+  const targets = useApp.getState().settings?.upload.targets ?? []
+  const link = latestLink(clip)
+  const copy: MenuItem[] = link
+    ? [
+        {
+          label: 'Copy link',
+          icon: <Link size={13} />,
+          onSelect: () => {
+            window.podium.app.copyText(link)
+            toast('Link copied', 'success')
+          }
+        }
+      ]
+    : []
+  if (targets.length <= 1) {
+    return [
+      {
+        label: targets[0] ? `Upload to ${targets[0].name}` : 'Upload…',
+        icon: <CloudUpload size={13} />,
+        onSelect: () => void uploadClip(clip)
+      },
+      ...copy
+    ]
+  }
+  return [
+    {
+      type: 'submenu',
+      label: 'Upload to',
+      icon: <CloudUpload size={13} />,
+      items: targets.map((t) => ({ label: t.name, onSelect: () => void uploadClip(clip, t.id) }))
+    },
+    ...copy
+  ]
+}
+
 export function clipMenu(clip: ClipView): MenuItem[] {
   return [
     { label: 'Open', icon: <Play size={13} />, onSelect: () => navigate({ view: 'clip', clipId: clip.id }) },
@@ -72,6 +109,7 @@ export function clipMenu(clip: ClipView): MenuItem[] {
         onSelect: () => void exportClip(clip, preset)
       }))
     },
+    ...uploadItems(clip),
     {
       label: 'Show in folder',
       icon: <FolderOpen size={13} />,

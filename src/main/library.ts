@@ -8,6 +8,7 @@ import {
   FILE_PROTOCOL,
   LIBRARY_IPC,
   type Clip,
+  type ClipUpload,
   type ClipView,
   type DetectedGame,
   type Filmstrip,
@@ -58,7 +59,12 @@ async function loadIndex(): Promise<IndexFile> {
   if (index) return index
   try {
     const data = JSON.parse(await readFile(indexPath(), 'utf8')) as IndexFile
-    index = { version: 1, clips: data.clips ?? [], games: data.games ?? {} }
+    // Indexes from before uploads existed have no `uploads` on their clips.
+    const clips = (data.clips ?? []).map((c) => ({
+      ...c,
+      uploads: Array.isArray(c.uploads) ? c.uploads : []
+    }))
+    index = { version: 1, clips, games: data.games ?? {} }
   } catch {
     index = { version: 1, clips: [], games: {} }
   }
@@ -330,7 +336,8 @@ async function describe(
     size: info.size,
     audioTracks: trackLabels(audio.map((a) => a.title)),
     bookmark: meta.bookmark,
-    favorite: false
+    favorite: false,
+    uploads: []
   }
 }
 
@@ -429,6 +436,7 @@ export async function refreshClip(id: string): Promise<void> {
     title: clip.title,
     createdAt: clip.createdAt,
     favorite: clip.favorite,
+    uploads: clip.uploads,
     bookmark: false
   })
   await saveIndex()
@@ -437,6 +445,15 @@ export async function refreshClip(id: string): Promise<void> {
 
 export async function getClip(id: string): Promise<Clip | null> {
   return (await loadIndex()).clips.find((c) => c.id === id) ?? null
+}
+
+/** Remembers a finished upload on the clip. */
+export async function recordUpload(id: string, upload: ClipUpload): Promise<void> {
+  const clip = await getClip(id)
+  if (!clip) return
+  clip.uploads = [...clip.uploads, upload]
+  await saveIndex()
+  broadcastChanged()
 }
 
 export async function listClips(): Promise<ClipView[]> {

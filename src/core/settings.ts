@@ -5,8 +5,11 @@ import {
   type ClipAction,
   type GameRule,
   type Hotkey,
+  type UploadSettings,
+  type UploadTarget,
   type VideoCodec
 } from '@shared/ipc'
+import { normalizeServerUrl } from './upload/protocol'
 
 type Raw = Record<string, unknown>
 
@@ -41,6 +44,38 @@ function gameRules(v: unknown): GameRule[] {
   return v.flatMap((r): GameRule[] =>
     isObject(r) && typeof r['match'] === 'string' ? [{ match: r['match'], name: str(r['name'], null) }] : []
   )
+}
+
+function uploadTargets(v: unknown): UploadTarget[] {
+  if (!Array.isArray(v)) return []
+  const seen = new Set<string>()
+  return v.flatMap((t): UploadTarget[] => {
+    if (!isObject(t) || typeof t['id'] !== 'string' || !t['id'] || seen.has(t['id'])) return []
+    if (t['protocol'] !== 'podium' || typeof t['url'] !== 'string') return []
+    let url: string
+    try {
+      url = normalizeServerUrl(t['url'])
+    } catch {
+      return []
+    }
+    seen.add(t['id'])
+    const name = typeof t['name'] === 'string' && t['name'].trim() ? t['name'].trim() : new URL(url).host
+    return [{ id: t['id'], name, protocol: 'podium', url }]
+  })
+}
+
+function upload(v: unknown): UploadSettings {
+  const d = DEFAULT_SETTINGS.upload
+  const u = isObject(v) ? v : {}
+  const targets = uploadTargets(u['targets'])
+  const defaultTarget = str(u['defaultTarget'], null)
+  return {
+    targets,
+    defaultTarget: targets.some((t) => t.id === defaultTarget) ? defaultTarget : null,
+    // Without somewhere to upload to there's nothing to do automatically.
+    auto: targets.length > 0 && bool(u['auto'], d.auto),
+    copyLink: bool(u['copyLink'], d.copyLink)
+  }
 }
 
 /**
@@ -82,6 +117,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
       startHidden: bool(startup['startHidden'], d.startup.startHidden)
     },
     closeToTray: bool(s['closeToTray'], d.closeToTray),
-    bufferOnLaunch: bool(s['bufferOnLaunch'], d.bufferOnLaunch)
+    bufferOnLaunch: bool(s['bufferOnLaunch'], d.bufferOnLaunch),
+    upload: upload(s['upload'])
   }
 }

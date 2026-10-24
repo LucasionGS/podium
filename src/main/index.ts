@@ -11,10 +11,12 @@ import {
   type AppInfo,
   type AppSettings,
   type ClipAction,
-  type ClipView
+  type ClipView,
+  type UploadJobState
 } from '@shared/ipc'
 import { actionFromArgs } from '@core/hotkeys'
 import { formatDuration, formatLength } from '@core/library/naming'
+import { autoUploadTarget } from '@core/upload/targets'
 import { applyAutostart } from './autostart'
 import { CaptureManager } from './capture/manager'
 import { cancelAllExports, registerExportIpc } from './export'
@@ -23,8 +25,10 @@ import { GameDetector } from './games/detect'
 import { enableShortcutPortal, Hotkeys } from './hotkeys'
 import { reconcileLibrary, registerFileProtocolScheme, registerLibraryIpc, thumbnailFor } from './library'
 import { libraryDir } from './paths'
+import { pruneTokens } from './secrets'
 import { getSettings, onSettingsChanged, updateSettings } from './settings'
 import { PodiumTray } from './tray'
+import { cancelAllUploads, onUploadFinished, registerUploadIpc, startUpload } from './upload/queue'
 import { loadRendererPage } from './windows'
 
 // ---------------------------------------------------------------- Test and automation hooks
@@ -46,6 +50,8 @@ if (isAutomatedRun) {
     process.on('exit', () => rmSync(profile, { recursive: true, force: true }))
   }
   app.commandLine.appendSwitch('mute-audio')
+  // Upload tokens must not touch (or prompt to unlock) the user's keyring.
+  app.commandLine.appendSwitch('password-store', 'basic')
 }
 // `PODIUM_USER_DATA=<dir>` runs against a given profile (e.g. a copy of a user's, to reproduce a bug).
 if (process.env['PODIUM_USER_DATA']) app.setPath('userData', process.env['PODIUM_USER_DATA'])
@@ -196,6 +202,42 @@ async function announceSaved(clip: ClipView, action: ClipAction): Promise<void> 
   )
 }
 
+// ---------------------------------------------------------------- Uploads
+
+function copyText(text: string): void {
+  // Automated runs must not overwrite whatever the user has on their clipboard.
+  if (isAutomatedRun) console.log('[clipboard]', text)
+  else clipboard.writeText(text)
+}
+
+/** Clips saved by a hotkey or the tray go straight to the default target when auto-upload is on. */
+function autoUpload(clip: ClipView, action: ClipAction): void {
+  const target = currentSettings && autoUploadTarget(currentSettings.upload, action)
+  if (!target) return
+  startUpload(clip.id, target.id, true).catch((error) =>
+    notify('Could not upload the clip', error instanceof Error ? error.message : String(error))
+  )
+}
+
+function announceUpload(job: UploadJobState): void {
+  const copy = job.state === 'done' && job.url && currentSettings?.upload.copyLink
+  if (copy) copyText(job.url!)
+  // The window shows its own toasts; a notification is for uploads nobody started by hand.
+  if (!job.auto) return
+  if (job.state === 'done') {
+    const url = job.url
+    notify(
+      `Clip uploaded · ${job.targetName}`,
+      copy ? `${job.clipTitle} · link copied` : job.clipTitle,
+      undefined,
+      url ? () => void shell.openExternal(url) : () => showWindow(`clip/${job.clipId}`)
+    )
+  } else
+    notify(`Upload to ${job.targetName} failed`, job.message ?? job.clipTitle, undefined, () =>
+      showWindow(`clip/${job.clipId}`)
+    )
+}
+
 // ---------------------------------------------------------------- IPC
 
 function registerIpc(): void {
@@ -221,11 +263,7 @@ function registerIpc(): void {
     })
     return res.canceled ? null : (res.filePath ?? null)
   })
-  ipcMain.on(IPC.copyText, (_e, text: string) => {
-    // Automated runs must not overwrite whatever the user has on their clipboard.
-    if (isAutomatedRun) console.log('[clipboard]', text)
-    else clipboard.writeText(text)
-  })
+  ipcMain.on(IPC.copyText, (_e, text: string) => copyText(text))
   ipcMain.on(IPC.openExternal, (_e, url: string) => {
     if (/^https?:/.test(url)) void shell.openExternal(url)
   })
@@ -249,6 +287,7 @@ function registerIpc(): void {
   hotkeys.registerIpc()
   registerLibraryIpc()
   registerExportIpc()
+  registerUploadIpc()
 }
 
 // ---------------------------------------------------------------- Startup
@@ -276,7 +315,11 @@ if (!isAutomatedRun && !app.requestSingleInstanceLock({ argv: process.argv })) {
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
     registerIpc()
 
-    capture.onSaved((clip, action) => void announceSaved(clip, action))
+    capture.onSaved((clip, action) => {
+      void announceSaved(clip, action)
+      autoUpload(clip, action)
+    })
+    onUploadFinished(announceUpload)
     capture.onStatus((status) => tray.update(status))
     onSettingsChanged((next, previous) => {
       currentSettings = next
@@ -284,6 +327,8 @@ if (!isAutomatedRun && !app.requestSingleInstanceLock({ argv: process.argv })) {
       if (JSON.stringify(next.hotkeys) !== JSON.stringify(previous.hotkeys))
         hotkeys.apply(next.hotkeys, !isAutomatedRun)
       if (next.startup.autostart !== previous.startup.autostart) void applyAutostart(next.startup.autostart)
+      if (next.upload.targets.length < previous.upload.targets.length)
+        void pruneTokens(next.upload.targets.map((t) => t.id))
     })
 
     mainWindow = createMainWindow(!(startHidden && currentSettings.startup.startHidden))
@@ -310,6 +355,7 @@ if (!isAutomatedRun && !app.requestSingleInstanceLock({ argv: process.argv })) {
   app.on('before-quit', () => {
     quitting = true
     cancelAllExports()
+    cancelAllUploads()
   })
   // Stop the engine before exiting, so gpu-screen-recorder never outlives Podium, but never let that hang the quit.
   let stopped = false

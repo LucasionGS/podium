@@ -33,6 +33,7 @@ const clip = (over: Partial<Clip>): Clip => ({
   audioTracks: [],
   bookmark: false,
   favorite: false,
+  uploads: [],
   ...over
 })
 

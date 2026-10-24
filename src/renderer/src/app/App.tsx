@@ -7,6 +7,7 @@ import { SettingsView } from '@/features/settings/SettingsView'
 import { useApp, wireApp } from '@/store/app'
 import { wireExports } from '@/store/exports'
 import { wireLibrary } from '@/store/library'
+import { wireUploads } from '@/store/uploads'
 import { Sidebar } from './Sidebar'
 import { StatusBar } from './StatusBar'
 
@@ -18,6 +19,7 @@ export function App() {
     void wireApp()
     void wireLibrary()
     wireExports()
+    wireUploads()
   }, [])
 
   if (!ready) return <Loading />

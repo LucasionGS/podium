@@ -1,5 +1,6 @@
-import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -134,5 +135,91 @@ describe('clip → library → export', () => {
     expect(existsSync(copy)).toBe(true)
     expect(probe(copy).streams.filter((s) => s.codec_type === 'audio')).toHaveLength(2)
     expect(videos(library)).toHaveLength(3)
+  })
+})
+
+describe('uploads', () => {
+  it('uploads to a Podium-compatible server, by hand and automatically after saving', async () => {
+    // The reference server runs as its own process: runApp blocks this one while the app runs.
+    const store = join(workDir, 'server')
+    const port = 18_000 + Math.floor(Math.random() * 2000)
+    const server = spawn(process.execPath, [join(root, 'docs/upload-reference-server.ts')], {
+      env: { ...process.env, PORT: String(port), PODIUM_UPLOAD_DIR: store, PODIUM_UPLOAD_TOKEN: 'secret' },
+      stdio: ['ignore', 'pipe', 'inherit']
+    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.stdout.on('data', (d: Buffer) => d.toString().includes('Podium upload server') && resolve())
+        server.once('exit', (code) => reject(new Error(`The upload server exited with ${code}`)))
+      })
+      const target = { id: 'e2e', name: 'E2E server', protocol: 'podium', url: `http://127.0.0.1:${port}/` }
+      const result = runApp(
+        `
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+        const settle = async (id) => {
+          for (;;) {
+            const job = (await window.podium.uploads.list()).find((j) => j.id === id)
+            if (!['queued', 'preparing', 'uploading', 'finishing'].includes(job.state)) return job
+            await wait(100)
+          }
+        }
+        const target = ${JSON.stringify(target)}
+        const badToken = await window.podium.uploads.test(target, 'wrong')
+        await window.podium.uploads.setToken(target.id, 'secret')
+        const test = await window.podium.uploads.test(target, null)
+        const settings = await window.podium.settings.update({
+          upload: { targets: [target], defaultTarget: null, auto: false, copyLink: true }
+        })
+        const [first] = await window.podium.library.list()
+        const manual = await settle(await window.podium.uploads.start(first.id))
+
+        await window.podium.settings.update({ upload: { ...settings.upload, auto: true } })
+        const saved = await window.podium.capture.save({ kind: 'clip', seconds: 2 })
+        const bookmark = await window.podium.capture.save({ kind: 'bookmark' })
+        await wait(300)
+        const autoJob = (await window.podium.uploads.list()).find((j) => j.clipId === saved.id)
+        const auto = autoJob && (await settle(autoJob.id))
+        const clips = await window.podium.library.list()
+        return {
+          badToken, test, url: settings.upload.targets[0].url, manual, auto,
+          bookmarkJobs: (await window.podium.uploads.list()).filter((j) => j.clipId === bookmark.id).length,
+          tokens: await window.podium.uploads.tokens(),
+          firstUploads: clips.find((c) => c.id === first.id).uploads,
+          savedPath: saved.path, firstPath: first.path
+        }
+      `,
+        'upload'
+      ) as {
+        badToken: { ok: boolean; message: string }
+        test: { ok: boolean; serverName: string }
+        url: string
+        manual: { state: string; message: string | null; url: string }
+        auto: { state: string; message: string | null; url: string; auto: boolean } | undefined
+        bookmarkJobs: number
+        tokens: Record<string, boolean>
+        firstUploads: Array<{ targetId: string; url: string }>
+        savedPath: string
+        firstPath: string
+      }
+
+      expect(result.badToken).toEqual({ ok: false, message: 'The access token is missing or wrong.' })
+      expect(result.test).toMatchObject({ ok: true, serverName: 'Podium reference server' })
+      expect(result.url).toBe(`http://127.0.0.1:${port}`)
+      expect(result.tokens).toEqual({ e2e: true })
+      expect(result.manual.state, result.manual.message ?? '').toBe('done')
+      expect(result.firstUploads).toEqual([
+        expect.objectContaining({ targetId: 'e2e', url: result.manual.url })
+      ])
+      expect(result.auto?.state, result.auto?.message ?? 'no auto upload').toBe('done')
+      expect(result.auto?.auto).toBe(true)
+      expect(result.bookmarkJobs).toBe(0)
+
+      // What the server stored is byte for byte what's in the library.
+      const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex')
+      const index = JSON.parse(readFileSync(join(store, 'index.json'), 'utf8')) as Array<{ sha256: string }>
+      expect(index.map((c) => c.sha256).sort()).toEqual([sha(result.firstPath), sha(result.savedPath)].sort())
+    } finally {
+      server.kill()
+    }
   })
 })

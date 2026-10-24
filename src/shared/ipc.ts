@@ -183,6 +183,8 @@ export interface Clip {
   /** Saved from the whole buffer with the bookmark hotkey; still needs trimming. */
   bookmark: boolean
   favorite: boolean
+  /** Where this clip was uploaded, oldest first. */
+  uploads: ClipUpload[]
 }
 
 /** A clip as the renderer sees it: urls the page can load. */
@@ -226,6 +228,66 @@ export interface ExportJobState {
   message: string | null
 }
 
+// ---------------------------------------------------------------- Uploads
+
+export type UploadProtocolKind = 'podium'
+
+interface UploadTargetBase {
+  id: string
+  name: string
+}
+
+/** A server that speaks the Podium upload protocol (docs/upload-protocol.md). Its token is kept in secrets.json. */
+export interface PodiumUploadTarget extends UploadTargetBase {
+  protocol: 'podium'
+  /** The protocol's base URL, without a trailing slash. */
+  url: string
+}
+
+/** Somewhere clips can be uploaded to; each protocol adds its own variant. */
+export type UploadTarget = PodiumUploadTarget
+
+export interface UploadSettings {
+  targets: UploadTarget[]
+  /** Where uploads go unless one is picked; null (or an id that no longer exists) means the first target. */
+  defaultTarget: string | null
+  /** Upload clips to the default target as soon as they're saved. Bookmarks wait for review. */
+  auto: boolean
+  /** Copy the link to the clipboard when an upload finishes. */
+  copyLink: boolean
+}
+
+/** A finished upload, remembered on the clip. */
+export interface ClipUpload {
+  targetId: string
+  /** The target's name when it was uploaded, so the record still reads well after the target is removed. */
+  targetName: string
+  remoteId: string
+  /** Where the clip can be watched, when the target gave a link. */
+  url: string | null
+  uploadedAt: number
+}
+
+export interface UploadJobState {
+  id: string
+  clipId: string
+  clipTitle: string
+  targetId: string
+  targetName: string
+  /** `preparing` computes the checksum; `finishing` waits for the server to accept the clip. */
+  state: 'queued' | 'preparing' | 'uploading' | 'finishing' | 'done' | 'error' | 'cancelled'
+  /** Started by auto-upload rather than by the user. */
+  auto: boolean
+  /** 0..1 */
+  progress: number
+  url: string | null
+  /** Error text, or the reason it's waiting (e.g. a retry countdown). */
+  message: string | null
+}
+
+export type UploadTestResult =
+  { ok: true; serverName: string; account: string | null } | { ok: false; message: string }
+
 // ---------------------------------------------------------------- Settings
 
 export interface AppSettings {
@@ -242,6 +304,7 @@ export interface AppSettings {
   closeToTray: boolean
   /** Start buffering as soon as Podium starts. */
   bufferOnLaunch: boolean
+  upload: UploadSettings
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -266,7 +329,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifications: { sound: true, soundVolume: 0.6, system: true },
   startup: { autostart: false, startHidden: true },
   closeToTray: true,
-  bufferOnLaunch: true
+  bufferOnLaunch: true,
+  upload: { targets: [], defaultTarget: null, auto: false, copyLink: true }
 }
 
 // ---------------------------------------------------------------- Channels
@@ -324,6 +388,18 @@ export const EXPORT_IPC = {
 export const GAMES_IPC = {
   current: 'games:current',
   changed: 'games:changed'
+} as const
+
+export const UPLOAD_IPC = {
+  start: 'upload:start',
+  cancel: 'upload:cancel',
+  list: 'upload:list',
+  /** Main → renderer, with every job. */
+  update: 'upload:update',
+  test: 'upload:test',
+  setToken: 'upload:set-token',
+  /** Which targets have a saved token (the tokens themselves never leave main). */
+  tokens: 'upload:tokens'
 } as const
 
 /** Windows engine: the hidden audio-capture window sends PCM chunks to main. */
@@ -413,6 +489,18 @@ export interface PodiumApi {
   hotkeys: {
     status(): Promise<HotkeyStatus>
     suspend(suspended: boolean): void
+  }
+  uploads: {
+    /** Queues an upload of the clip's file; without a target it goes to the default one. Resolves with the job id. */
+    start(clipId: string, targetId?: string): Promise<string>
+    cancel(id: string): void
+    list(): Promise<UploadJobState[]>
+    onUpdate(cb: (jobs: UploadJobState[]) => void): () => void
+    /** Checks a target's server and token. A null token tests with the saved one, an empty one without any. */
+    test(target: UploadTarget, token: string | null): Promise<UploadTestResult>
+    /** Saves a target's token; null removes it. */
+    setToken(targetId: string, token: string | null): Promise<void>
+    tokens(): Promise<Record<string, boolean>>
   }
   pathForFile(file: File): string
 }
