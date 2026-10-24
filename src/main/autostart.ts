@@ -2,6 +2,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { isSquirrelInstall, squirrelLaunch } from './update/squirrel'
 
 const desktopFile = (): string =>
   join(process.env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config'), 'autostart', 'podium.desktop')
@@ -11,7 +12,9 @@ export async function applyAutostart(enabled: boolean): Promise<void> {
   // A development build would register the bare Electron binary.
   if (!app.isPackaged) return
   if (process.platform !== 'linux') {
-    app.setLoginItemSettings({ openAtLogin: enabled, args: ['--hidden'] })
+    // Squirrel keeps each version in its own folder; Update.exe always starts the newest.
+    const launch = isSquirrelInstall() ? squirrelLaunch(['--hidden']) : { args: ['--hidden'] }
+    app.setLoginItemSettings({ openAtLogin: enabled, ...launch })
     return
   }
   if (!enabled) {

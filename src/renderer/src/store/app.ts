@@ -92,6 +92,8 @@ export async function wireApp(): Promise<void> {
   api.app.onNavigate((route) => {
     const clip = /^clip\/(.+)$/.exec(route)
     if (clip) navigate({ view: 'clip', clipId: clip[1]! })
+    const settings = /^settings\/(\w+)$/.exec(route)
+    if (settings) navigate({ view: 'settings', tab: settings[1] as SettingsTab })
   })
   // Each piece loads on its own; only settings are essential to render.
   const settle = <T>(promise: Promise<T>, fallback: T): Promise<T> =>

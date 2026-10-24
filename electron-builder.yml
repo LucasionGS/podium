@@ -24,6 +24,7 @@ linux:
   category: AudioVideo
   executableName: podium
   # System packages (pacman, deb) need a "homepage" in package.json; see `pnpm dist:pacman`.
+  # Each kind updates itself differently (src/main/update); they find out which they are from `package-type`.
   target: [AppImage]
   # ffprobe-static ships every platform's binary, and a cross-build leaves ffmpeg.exe next to ffmpeg.
   files:
@@ -34,16 +35,20 @@ pacman:
   # These are what Electron actually loads. gpu-screen-recorder does the capturing on Linux.
   depends: [gtk3, nss, libxss, libnotify, alsa-lib, at-spi2-core, libxkbcommon, mesa, libcups]
   # electron-builder has no optdepends field; README tells users to install gpu-screen-recorder.
+deb:
+  # Debian and Ubuntu don't package gpu-screen-recorder; README points to its Flatpak.
+  packageCategory: video
 win:
   icon: resources/icon.png
-  target: [nsis]
+  # Squirrel installs per user (no admin) and updates itself from the GitHub releases (see src/main/update).
+  target: [squirrel]
   files:
     - '!node_modules/ffmpeg-static/ffmpeg'
     - '!node_modules/ffprobe-static/bin/darwin/**'
     - '!node_modules/ffprobe-static/bin/linux/**'
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
+squirrelWindows:
+  # Shown in Programs and Features; Squirrel only takes a URL here.
+  iconUrl: https://raw.githubusercontent.com/LucasionGS/podium/master/resources/icon.ico
 mac:
   icon: resources/icon.png
   category: public.app-category.video

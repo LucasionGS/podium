@@ -118,6 +118,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     },
     closeToTray: bool(s['closeToTray'], d.closeToTray),
     bufferOnLaunch: bool(s['bufferOnLaunch'], d.bufferOnLaunch),
-    upload: upload(s['upload'])
+    upload: upload(s['upload']),
+    updates: { check: bool(isObject(s['updates']) ? s['updates']['check'] : undefined, d.updates.check) }
   }
 }

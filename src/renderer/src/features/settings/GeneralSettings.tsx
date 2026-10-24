@@ -1,9 +1,10 @@
-import { Volume2 } from 'lucide-react'
+import { ExternalLink, Volume2 } from 'lucide-react'
 import type { AppSettings } from '@shared/ipc'
 import { Button } from '@/ui/Button'
 import { Switch } from '@/ui/Switch'
 import { playCue } from '@/lib/cue'
 import { updateSettings, useApp } from '@/store/app'
+import { checkForUpdates, installUpdate, useUpdates } from '@/store/updates'
 import { Group, Row } from './Row'
 
 export function GeneralSettings() {
@@ -75,6 +76,20 @@ export function GeneralSettings() {
         </Row>
       </Group>
 
+      <Group title="Updates">
+        <UpdateRow />
+        <Row
+          label="Check for updates automatically"
+          hint="When Podium starts and every few hours, on GitHub."
+        >
+          <Switch
+            label="Check for updates automatically"
+            checked={settings.updates.check}
+            onChange={(check) => void updateSettings({ updates: { check } })}
+          />
+        </Row>
+      </Group>
+
       <Group title="About">
         <Row
           label={`Podium ${info?.version ?? ''}`}
@@ -84,5 +99,72 @@ export function GeneralSettings() {
         </Row>
       </Group>
     </>
+  )
+}
+
+function UpdateRow() {
+  const status = useUpdates((s) => s.status)
+  if (!status) return null
+  const { state, available } = status
+  const working = state === 'downloading' || state === 'installing'
+  const checked = status.checkedAt ? new Date(status.checkedAt).toLocaleString() : null
+
+  const label = available
+    ? state === 'ready'
+      ? `Podium ${available.version} is installed`
+      : `Podium ${available.version} is available`
+    : state === 'up-to-date'
+      ? 'Podium is up to date'
+      : `Podium ${status.current}`
+  const hint = (
+    <>
+      {working && (
+        <span className="mt-1.5 block h-1 overflow-hidden rounded bg-line">
+          <span
+            className={`block h-full bg-accent transition-[width] ${status.progress === null ? 'animate-pulse' : ''}`}
+            style={{ width: `${(status.progress ?? 1) * 100}%` }}
+          />
+        </span>
+      )}
+      {status.message && (
+        <span className={`mt-1 block break-words select-text ${state === 'error' ? 'text-danger' : ''}`}>
+          {status.message}
+        </span>
+      )}
+      {!working && !status.message && (
+        <span className="block">
+          {state === 'ready'
+            ? 'Restart Podium to start using it.'
+            : available
+              ? `You have ${status.current}. ${status.method}`
+              : `${status.method}${checked ? ` Last checked ${checked}.` : ''}`}
+        </span>
+      )}
+    </>
+  )
+
+  return (
+    <Row label={label} hint={hint}>
+      {available && (
+        <Button variant="ghost" onClick={() => window.podium.app.openExternal(available.url)}>
+          <ExternalLink size={13} /> What’s new
+        </Button>
+      )}
+      {state === 'ready' ? (
+        <Button variant="primary" onClick={() => window.podium.updates.restart()}>
+          Restart now
+        </Button>
+      ) : available && status.canInstall ? (
+        <Button variant="primary" disabled={working} onClick={() => void installUpdate()}>
+          {working ? 'Updating…' : state === 'error' ? 'Try again' : 'Install update'}
+        </Button>
+      ) : available ? (
+        <Button onClick={() => window.podium.app.openExternal(available.url)}>Download</Button>
+      ) : (
+        <Button disabled={state === 'checking'} onClick={() => void checkForUpdates()}>
+          {state === 'checking' ? 'Checking…' : 'Check for updates'}
+        </Button>
+      )}
+    </Row>
   )
 }

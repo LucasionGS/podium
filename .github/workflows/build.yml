@@ -71,10 +71,19 @@ jobs:
             name: linux
             # bsdtar (libarchive-tools) is what electron-builder uses to write pacman packages.
             setup: sudo apt-get update && sudo apt-get install -y libarchive-tools
-            targets: --linux AppImage pacman
+            targets: --linux AppImage pacman deb
+            files: |
+              dist/*.AppImage
+              dist/*.pacman
+              dist/*.deb
           - os: windows-latest
             name: windows
-            targets: --win nsis
+            targets: --win squirrel
+            # Squirrel's feed: the installer, the full package and RELEASES, which lists the package by name.
+            files: |
+              dist/squirrel-windows/*.exe
+              dist/squirrel-windows/*.nupkg
+              dist/squirrel-windows/RELEASES
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -91,10 +100,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: podium-${{ matrix.name }}
-          path: |
-            dist/*.AppImage
-            dist/*.pacman
-            dist/*.exe
+          path: ${{ matrix.files }}
           if-no-files-found: error
 
   release:

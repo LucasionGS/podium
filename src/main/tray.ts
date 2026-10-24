@@ -1,11 +1,14 @@
 import { join } from 'node:path'
-import { app, Menu, nativeImage, Tray } from 'electron'
-import type { CaptureStatus, ClipAction } from '@shared/ipc'
+import { app, Menu, nativeImage, Tray, type MenuItemConstructorOptions } from 'electron'
+import type { CaptureStatus, ClipAction, UpdateStatus } from '@shared/ipc'
 
 export interface TrayActions {
   save(action: ClipAction): void
   toggleBuffer(): void
   show(): void
+  /** Opens Settings on the update. */
+  showUpdate(): void
+  restartToUpdate(): void
   quit(): void
 }
 
@@ -23,6 +26,8 @@ const STATE_LABELS: Record<CaptureStatus['state'], string> = {
 
 export class PodiumTray {
   private tray: Tray | null = null
+  private status: CaptureStatus | null = null
+  private updateStatus: UpdateStatus | null = null
 
   constructor(private readonly actions: TrayActions) {}
 
@@ -34,8 +39,31 @@ export class PodiumTray {
     this.update(status)
   }
 
+  setUpdate(status: UpdateStatus): void {
+    this.updateStatus = status
+    if (this.status) this.update(this.status)
+  }
+
+  private updateItems(): MenuItemConstructorOptions[] {
+    const update = this.updateStatus
+    if (update?.state === 'ready')
+      return [
+        {
+          label: `Restart to update to ${update.available?.version}`,
+          click: () => this.actions.restartToUpdate()
+        }
+      ]
+    if (update?.available && update.state !== 'up-to-date')
+      return [
+        { label: `Podium ${update.available.version} is available…`, click: () => this.actions.showUpdate() }
+      ]
+    return []
+  }
+
   update(status: CaptureStatus): void {
+    this.status = status
     if (!this.tray) return
+    const updates = this.updateItems()
     const buffering = status.state === 'buffering'
     this.tray.setContextMenu(
       Menu.buildFromTemplate([
@@ -59,6 +87,8 @@ export class PodiumTray {
         },
         { label: 'Open Podium', click: () => this.actions.show() },
         { type: 'separator' },
+        ...updates,
+        ...(updates.length ? [{ type: 'separator' as const }] : []),
         { label: 'Quit Podium', click: () => this.actions.quit() }
       ])
     )

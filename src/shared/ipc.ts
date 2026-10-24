@@ -288,6 +288,39 @@ export interface UploadJobState {
 export type UploadTestResult =
   { ok: true; serverName: string; account: string | null } | { ok: false; message: string }
 
+// ---------------------------------------------------------------- Updates
+
+/**
+ * How this copy of Podium was installed, which decides how it updates: Squirrel on Windows, the AppImage
+ * replacing itself, a system package through pkexec, or the AUR package rebuilt with makepkg.
+ */
+export type InstallKind =
+  'squirrel' | 'appimage' | 'deb' | 'pacman' | 'aur' | 'aur-git' | 'dev' | 'unsupported'
+
+export interface UpdateRelease {
+  version: string
+  /** The release page, with its notes. */
+  url: string
+  notes: string
+  publishedAt: string | null
+}
+
+export interface UpdateStatus {
+  current: string
+  kind: InstallKind
+  /** How updates get installed here, as a sentence for Settings. */
+  method: string
+  /** Whether Podium can install updates itself; when it can't, `method` says what to do instead. */
+  canInstall: boolean
+  state: 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'installing' | 'ready' | 'error'
+  available: UpdateRelease | null
+  /** 0..1, or null when there's no way to tell. */
+  progress: number | null
+  /** What's happening right now (a build step), or what went wrong. */
+  message: string | null
+  checkedAt: number | null
+}
+
 // ---------------------------------------------------------------- Settings
 
 export interface AppSettings {
@@ -305,6 +338,8 @@ export interface AppSettings {
   /** Start buffering as soon as Podium starts. */
   bufferOnLaunch: boolean
   upload: UploadSettings
+  /** Look for new releases at startup and every few hours. */
+  updates: { check: boolean }
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -330,7 +365,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   startup: { autostart: false, startHidden: true },
   closeToTray: true,
   bufferOnLaunch: true,
-  upload: { targets: [], defaultTarget: null, auto: false, copyLink: true }
+  upload: { targets: [], defaultTarget: null, auto: false, copyLink: true },
+  updates: { check: true }
 }
 
 // ---------------------------------------------------------------- Channels
@@ -400,6 +436,15 @@ export const UPLOAD_IPC = {
   setToken: 'upload:set-token',
   /** Which targets have a saved token (the tokens themselves never leave main). */
   tokens: 'upload:tokens'
+} as const
+
+export const UPDATE_IPC = {
+  status: 'update:status',
+  check: 'update:check',
+  install: 'update:install',
+  restart: 'update:restart',
+  /** Main → renderer. */
+  changed: 'update:changed'
 } as const
 
 /** Windows engine: the hidden audio-capture window sends PCM chunks to main. */
@@ -501,6 +546,15 @@ export interface PodiumApi {
     /** Saves a target's token; null removes it. */
     setToken(targetId: string, token: string | null): Promise<void>
     tokens(): Promise<Record<string, boolean>>
+  }
+  updates: {
+    status(): Promise<UpdateStatus>
+    check(): Promise<UpdateStatus>
+    /** Downloads and installs the available update; resolves once it's ready for a restart. */
+    install(): Promise<void>
+    /** Restarts into the installed update. */
+    restart(): void
+    onChanged(cb: (status: UpdateStatus) => void): () => void
   }
   pathForFile(file: File): string
 }

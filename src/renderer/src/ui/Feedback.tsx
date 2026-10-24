@@ -57,7 +57,7 @@ export function ConfirmDialog() {
               {request.alternateLabel}
             </Button>
           )}
-          <Button onClick={() => request.resolve('cancel')}>Cancel</Button>
+          <Button onClick={() => request.resolve('cancel')}>{request.cancelLabel ?? 'Cancel'}</Button>
           <Button
             variant="primary"
             className={request.danger ? 'bg-danger hover:bg-danger/80' : ''}

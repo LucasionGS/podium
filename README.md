@@ -30,8 +30,30 @@ FFmpeg is bundled for exports; a system FFmpeg with GPU encoders (NVENC, VAAPI, 
   prebuilt package, and `podium-git` builds the latest commit (update it with `yay -Syu --devel`).
   The PKGBUILDs live in `packaging/aur`; releases are pushed to the AUR by the build workflow, and
   `packaging/aur/publish.sh <package>` publishes one by hand.
-- **Windows and other Linux distros**: every push to `master` builds a Windows installer, an AppImage and a
-  pacman package; download them from the run's artifacts on the Actions tab.
+- **Windows**: `Podium.Setup.<version>.exe` from the [latest release](https://github.com/LucasionGS/podium/releases/latest).
+  It installs for your user only (no admin rights needed). Podium 0.2.0 and older used a different installer:
+  uninstall that one first.
+- **Debian and Ubuntu**: `podium_<version>_amd64.deb` from the latest release (`sudo apt install ./podium_*.deb`).
+- **Other Linux distros**: the AppImage from the latest release.
+
+Every push to `master` also builds all of these as artifacts of the run on the Actions tab.
+
+### Updates
+
+Podium checks GitHub for a new release when it starts and every six hours (you can turn this off in
+**Settings → General**). It tells you when one is out, and **Install update** puts it in place, then offers
+to restart into it:
+
+| Installed as | How it updates |
+| --- | --- |
+| Windows installer | Squirrel downloads the new version in the background and swaps it in on restart. |
+| AppImage | The AppImage file is replaced with the new one. |
+| `.deb` / release pacman package | The new package is installed with apt or pacman through `pkexec` (your desktop asks for your password). |
+| `podium`, `podium-bin` (AUR) | The AUR package is built with `makepkg`, like an AUR helper would, then installed with `pkexec pacman -U`. |
+| `podium-git` (AUR) | Not updated by Podium: use `yay -Syu --devel`. |
+
+Downloads are checked against the release's `SHA256SUMS.txt`. Podium knows how it was installed from the
+`package-type` file next to its resources, which the AUR PKGBUILDs set to `aur:<package>`.
 
 ### Releasing
 
@@ -64,7 +86,7 @@ pnpm dev          # run with hot reload
 pnpm test         # unit tests (src/core)
 pnpm test:e2e     # builds, then drives the app offscreen with a fake capture engine
 pnpm typecheck
-pnpm dist:pacman  # or pnpm dist for the platform's default installer
+pnpm dist:pacman  # or dist:deb, or pnpm dist for the platform's default installer
 ```
 
 `PODIUM_BACKEND=fake` swaps the capture engine for one that renders a test pattern with two audio tracks,
@@ -84,6 +106,8 @@ src/main      Electron main process
               for <video>), thumbnails, filmstrips and per-track audio for the player
   export.ts   Export queue (FFmpeg with GPU encoders, falling back to x264)
   upload/     UploadProtocol interface, the Podium protocol client and the upload queue (auto-upload, links)
+  update/     Update checks against GitHub releases and one installer per install kind (Squirrel, AppImage,
+              deb/pacman through pkexec, AUR packages rebuilt with makepkg)
   secrets.ts  Upload tokens, encrypted with the OS keyring (safeStorage) and kept out of settings.json
   hotkeys.ts, tray.ts, autostart.ts
 src/shared    Typed IPC channels and the preload API

@@ -10,6 +10,8 @@ export interface ConfirmRequest {
   title: string
   message: string
   confirmLabel: string
+  /** Defaults to Cancel. */
+  cancelLabel?: string
   /** Optional third button, e.g. "Don't save". */
   alternateLabel?: string
   danger?: boolean
