@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
-import { Bookmark, Film, Monitor, Settings, Star } from 'lucide-react'
+import { ArrowUpCircle, Bookmark, Film, Monitor, Settings, Star } from 'lucide-react'
 import { navigate, useApp, type LibraryFilter } from '@/store/app'
 import { useLibrary } from '@/store/library'
+import { useUpdates } from '@/store/updates'
 import { Logo } from './Logo'
 
 const sameFilter = (a: LibraryFilter, b: LibraryFilter): boolean =>
@@ -64,6 +65,7 @@ export function Sidebar() {
       </div>
 
       <div className="border-t border-line p-2">
+        <UpdateItem />
         <SidebarItem
           icon={<Settings size={15} />}
           label="Settings"
@@ -72,6 +74,35 @@ export function Sidebar() {
         />
       </div>
     </nav>
+  )
+}
+
+/** Shown while there's an update to install, install or restart into. */
+function UpdateItem() {
+  const status = useUpdates((s) => s.status)
+  const version = status?.available?.version
+  if (!status || !version || status.state === 'up-to-date' || status.state === 'checking') return null
+  const label =
+    status.state === 'ready'
+      ? 'Restart to update'
+      : status.state === 'downloading' || status.state === 'installing'
+        ? `Updating${status.progress !== null && status.state === 'downloading' ? ` ${Math.round(status.progress * 100)}%` : '…'}`
+        : `Podium ${version} is out`
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        status.state === 'ready'
+          ? window.podium.updates.restart()
+          : navigate({ view: 'settings', tab: 'general' })
+      }
+      className="mb-1 flex h-8 w-full items-center gap-2.5 rounded-md bg-accent-soft px-2 text-left text-[13px] text-fg hover:bg-accent/25"
+    >
+      <span className="flex w-[18px] shrink-0 justify-center text-accent">
+        <ArrowUpCircle size={15} />
+      </span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </button>
   )
 }
 

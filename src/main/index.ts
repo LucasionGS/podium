@@ -28,6 +28,8 @@ import { libraryDir } from './paths'
 import { pruneTokens } from './secrets'
 import { getSettings, onSettingsChanged, updateSettings } from './settings'
 import { PodiumTray } from './tray'
+import { handleSquirrelEvent, isSquirrelInstall } from './update/squirrel'
+import { AFTER_UPDATE_ARG, Updater } from './update/updater'
 import { cancelAllUploads, onUploadFinished, registerUploadIpc, startUpload } from './upload/queue'
 import { loadRendererPage } from './windows'
 
@@ -93,6 +95,12 @@ const tray = new PodiumTray({
     void (state === 'buffering' || state === 'starting' ? capture.stop() : capture.start())
   },
   show: () => showWindow(),
+  showUpdate: () => showWindow('settings/general'),
+  restartToUpdate: () => updater.restart(),
+  quit: () => quit()
+})
+const updater = new Updater({
+  notify: (title, body) => notify(title, body, undefined, () => showWindow('settings/general')),
   quit: () => quit()
 })
 let mainWindow: BrowserWindow | null = null
@@ -288,22 +296,45 @@ function registerIpc(): void {
   registerLibraryIpc()
   registerExportIpc()
   registerUploadIpc()
+  updater.registerIpc()
 }
 
 // ---------------------------------------------------------------- Startup
 
+/** After an update the old Podium may still be shutting down; give it a few seconds to let go of the lock. */
+function acquireInstanceLock(): boolean {
+  const data = { argv: process.argv }
+  if (app.requestSingleInstanceLock(data)) return true
+  if (!process.argv.includes(AFTER_UPDATE_ARG)) return false
+  const pause = new Int32Array(new SharedArrayBuffer(4))
+  for (const until = Date.now() + 10_000; Date.now() < until;) {
+    Atomics.wait(pause, 0, 0, 250)
+    if (app.requestSingleInstanceLock(data)) return true
+  }
+  return false
+}
+
+// Squirrel.Windows starts Podium after installing, updating or uninstalling it, only to create or remove shortcuts.
+const squirrelEvent = handleSquirrelEvent()
+
 enableShortcutPortal()
-// Windows only shows notifications for apps with an identity (it matches electron-builder's appId).
-if (process.platform === 'win32') app.setAppUserModelId('dev.ionnet.podium')
+// Windows only shows notifications for apps with an identity: Squirrel's shortcuts carry
+// com.squirrel.<package>.<exe>, other installs electron-builder's appId.
+if (process.platform === 'win32')
+  app.setAppUserModelId(isSquirrelInstall() ? 'com.squirrel.podium.Podium' : 'dev.ionnet.podium')
 registerFileProtocolScheme()
 
 // Chromium reorders switches in the argv it forwards, so the original is sent along as well.
-if (!isAutomatedRun && !app.requestSingleInstanceLock({ argv: process.argv })) {
+if (squirrelEvent) {
+  // Squirrel's housekeeping only; the app quits by itself.
+} else if (!isAutomatedRun && !acquireInstanceLock()) {
   // Podium is already running: it receives our argv (e.g. `--clip 30`) through 'second-instance'.
   app.quit()
 } else {
   app.on('second-instance', (_e, chromiumArgv, _cwd, data) => {
     const argv = (data as { argv?: string[] } | null)?.argv ?? chromiumArgv
+    // The updated Podium asking for the lock while this one is on its way out.
+    if (quitting || argv.includes(AFTER_UPDATE_ARG)) return
     const action = actionFromArgs(argv)
     if (action) void saveClip(action)
     else if (!argv.includes('--hidden')) showWindow()
@@ -321,12 +352,14 @@ if (!isAutomatedRun && !app.requestSingleInstanceLock({ argv: process.argv })) {
     })
     onUploadFinished(announceUpload)
     capture.onStatus((status) => tray.update(status))
+    updater.onChange((status) => tray.setUpdate(status))
     onSettingsChanged((next, previous) => {
       currentSettings = next
       void capture.applySettings(next, previous)
       if (JSON.stringify(next.hotkeys) !== JSON.stringify(previous.hotkeys))
         hotkeys.apply(next.hotkeys, !isAutomatedRun)
       if (next.startup.autostart !== previous.startup.autostart) void applyAutostart(next.startup.autostart)
+      if (next.updates.check !== previous.updates.check && !isAutomatedRun) updater.apply(next)
       if (next.upload.targets.length < previous.upload.targets.length)
         void pruneTokens(next.upload.targets.map((t) => t.id))
     })
@@ -346,6 +379,8 @@ if (!isAutomatedRun && !app.requestSingleInstanceLock({ argv: process.argv })) {
     step('hotkeys', () => hotkeys.apply(currentSettings!.hotkeys, !isAutomatedRun))
     step('games', () => games.start())
     step('library', () => reconcileLibrary(true))
+    // Test runs check only when a script asks them to.
+    if (!isAutomatedRun) step('updates', () => updater.apply(currentSettings!))
     // Test runs only capture with the fake engine, unless PODIUM_REAL_CAPTURE asks for the real one.
     const mayCapture =
       !isAutomatedRun || process.env['PODIUM_BACKEND'] === 'fake' || process.env['PODIUM_REAL_CAPTURE']
@@ -365,6 +400,7 @@ if (!isAutomatedRun && !app.requestSingleInstanceLock({ argv: process.argv })) {
     stopped = true
     games.stop()
     hotkeys.stop()
+    updater.stop()
     const deadline = new Promise((resolve) => setTimeout(resolve, 4000))
     void Promise.race([capture.shutdown(), deadline]).finally(() => app.exit(0))
   })

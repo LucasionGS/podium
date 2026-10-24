@@ -20,6 +20,7 @@
     "dist": "pnpm build && electron-builder",
     "dist:dir": "pnpm build && electron-builder --dir",
     "dist:pacman": "pnpm build && electron-builder --linux pacman",
+    "dist:deb": "pnpm build && electron-builder --linux deb",
     "aur:publish": "packaging/aur/publish.sh"
   },
   "dependencies": {
@@ -37,6 +38,7 @@
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
+    "electron-builder-squirrel-windows": "^26.15.3",
     "electron-vite": "^5.0.0",
     "lucide-react": "^1.47.0",
     "prettier": "^3.9.9",

@@ -3,6 +3,7 @@ import { HOTKEYS_IPC, type ClipAction, type Hotkey, type HotkeyStatus } from '@s
 import { acceleratorKey, actionToArgs, isMouseAccelerator, planShortcuts } from '@core/hotkeys'
 import { HyprlandBinds, isHyprland } from './hyprland'
 import { MouseHook } from './mouseHook'
+import { isSquirrelInstall, squirrelLaunch } from './update/squirrel'
 
 const isWayland = (): boolean => process.platform === 'linux' && Boolean(process.env['WAYLAND_DISPLAY'])
 
@@ -18,6 +19,11 @@ export function enableShortcutPortal(): void {
 /** The command that makes the running Podium do something (see `actionFromArgs`). */
 export function cliCommand(action: ClipAction): string {
   const quote = (s: string): string => (/[\s"'$]/.test(s) ? `"${s.replace(/(["\\$`])/g, '\\$1')}"` : s)
+  // The path of a Squirrel install changes with every update; Update.exe stays put.
+  if (isSquirrelInstall()) {
+    const launch = squirrelLaunch(actionToArgs(action))
+    return [launch.path, ...launch.args].map(quote).join(' ')
+  }
   const executable = process.env['APPIMAGE'] ?? process.execPath
   // In development the executable is Electron itself and needs the app folder.
   const base = app.isPackaged ? [executable] : [executable, app.getAppPath()]

@@ -7,6 +7,7 @@ import {
   IPC,
   LIBRARY_IPC,
   SETTINGS_IPC,
+  UPDATE_IPC,
   UPLOAD_IPC,
   type PodiumApi
 } from '@shared/ipc'
@@ -80,6 +81,13 @@ const api: PodiumApi = {
     test: (target, token) => ipcRenderer.invoke(UPLOAD_IPC.test, target, token),
     setToken: (targetId, token) => ipcRenderer.invoke(UPLOAD_IPC.setToken, targetId, token),
     tokens: () => ipcRenderer.invoke(UPLOAD_IPC.tokens)
+  },
+  updates: {
+    status: () => ipcRenderer.invoke(UPDATE_IPC.status),
+    check: () => ipcRenderer.invoke(UPDATE_IPC.check),
+    install: () => ipcRenderer.invoke(UPDATE_IPC.install),
+    restart: () => ipcRenderer.send(UPDATE_IPC.restart),
+    onChanged: (cb) => listen(UPDATE_IPC.changed, cb)
   },
   pathForFile: (file) => webUtils.getPathForFile(file)
 }

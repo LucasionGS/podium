@@ -15,7 +15,7 @@ let library: string
  * Runs the built app offscreen with the fake capture engine, executes `script` in the page
  * (it gets `window.podium`) and returns what the script resolved with.
  */
-function runApp(script: string, name: string): unknown {
+function runApp(script: string, name: string, env: Record<string, string> = {}): unknown {
   const scriptPath = join(workDir, `${name}.js`)
   writeFileSync(scriptPath, `(async () => JSON.stringify(await (async () => { ${script} })()))()`)
   const run = spawnSync(electron, [root, ...(process.env['CI'] ? ['--no-sandbox'] : [])], {
@@ -25,7 +25,8 @@ function runApp(script: string, name: string): unknown {
       PODIUM_LIBRARY_DIR: library,
       PODIUM_SCREENSHOT: join(workDir, `${name}.png`),
       PODIUM_DEBUG_SCRIPT: scriptPath,
-      PODIUM_SCREENSHOT_DELAY: '1500'
+      PODIUM_SCREENSHOT_DELAY: '1500',
+      ...env
     },
     timeout: 150_000,
     encoding: 'utf8'
@@ -218,6 +219,75 @@ describe('uploads', () => {
       const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex')
       const index = JSON.parse(readFileSync(join(store, 'index.json'), 'utf8')) as Array<{ sha256: string }>
       expect(index.map((c) => c.sha256).sort()).toEqual([sha(result.firstPath), sha(result.savedPath)].sort())
+    } finally {
+      server.kill()
+    }
+  })
+})
+
+describe('updates', () => {
+  it('finds a newer release, installs it over the AppImage and offers the restart', async () => {
+    const appImage = join(workDir, 'Podium.AppImage')
+    writeFileSync(appImage, 'old version')
+    const port = 20_000 + Math.floor(Math.random() * 2000)
+    // A stand-in for GitHub: the latest-release API and its downloads. Its own process, as runApp blocks this one.
+    const server = spawn(
+      process.execPath,
+      [
+        '-e',
+        `
+        const { createHash } = require('node:crypto')
+        const base = 'http://127.0.0.1:${port}'
+        const appImage = Buffer.from('#!/bin/sh\\necho 9.9.9\\n')
+        const sums = createHash('sha256').update(appImage).digest('hex') + '  Podium-9.9.9.AppImage\\n'
+        const release = {
+          tag_name: 'v9.9.9', html_url: base + '/notes', body: 'Notes', published_at: null,
+          assets: [
+            { name: 'Podium-9.9.9.AppImage', browser_download_url: base + '/Podium-9.9.9.AppImage', size: appImage.length },
+            { name: 'SHA256SUMS.txt', browser_download_url: base + '/SHA256SUMS.txt', size: sums.length }
+          ]
+        }
+        const routes = { '/latest': JSON.stringify(release), '/Podium-9.9.9.AppImage': appImage, '/SHA256SUMS.txt': sums }
+        require('node:http').createServer((req, res) => {
+          const body = routes[req.url]
+          if (body === undefined) return res.writeHead(404).end()
+          res.writeHead(200).end(body)
+        }).listen(${port}, () => console.log('ready'))
+        `
+      ],
+      { stdio: ['ignore', 'pipe', 'inherit'] }
+    )
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.stdout.on('data', (d: Buffer) => d.toString().includes('ready') && resolve())
+        server.once('exit', (code) => reject(new Error(`The release server exited with ${code}`)))
+      })
+      const result = runApp(
+        `
+        const checked = await window.podium.updates.check()
+        await window.podium.updates.install()
+        await new Promise((r) => setTimeout(r, 300))
+        return { checked, done: await window.podium.updates.status() }
+      `,
+        'update',
+        {
+          PODIUM_UPDATE_URL: `http://127.0.0.1:${port}/latest`,
+          PODIUM_INSTALL_KIND: 'appimage',
+          APPIMAGE: appImage
+        }
+      ) as {
+        checked: { state: string; kind: string; canInstall: boolean; available: { version: string } | null }
+        done: { state: string; message: string | null }
+      }
+
+      expect(result.checked).toMatchObject({
+        state: 'available',
+        kind: 'appimage',
+        canInstall: true,
+        available: { version: '9.9.9' }
+      })
+      expect(result.done.state, result.done.message ?? '').toBe('ready')
+      expect(readFileSync(appImage, 'utf8')).toBe('#!/bin/sh\necho 9.9.9\n')
     } finally {
       server.kill()
     }
