@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/ipc'
 import {
+  AUDIO_SLACK_FRAMES,
   buildWindowsArgs,
-  concatList,
   encoderName,
+  MAX_SILENCE_FRAMES,
   parseRegValue,
   pickSegments,
   probeArgs,
   ringSize,
+  runsAhead,
+  SAMPLE_RATE,
+  saveArgs,
+  silenceDue,
   videoEncodeArgs
 } from '@core/capture/windows'
 
@@ -28,6 +33,8 @@ describe('Windows capture arguments', () => {
     expect(flag('-c:v')).toBe('h264_nvenc')
     expect(flag('-segment_wrap')).toBe(String(ringSize(120)))
     expect(args.at(-1)).toBe('C:/Users/me/Videos/Podium/.podium/ring/seg%05d.ts')
+    // Saves join segments byte for byte, which needs the recording's continuous timestamps.
+    expect(args).not.toContain('-reset_timestamps')
     // Two raw PCM pipes become two audio tracks.
     expect(args.filter((a) => a === 'f32le')).toHaveLength(2)
     expect(args.filter((a) => a === '-map')).toHaveLength(3)
@@ -87,8 +94,37 @@ describe('segment ring', () => {
     expect(pickSegments(ring, 60)).toHaveLength(4)
   })
 
-  it('writes concat lists FFmpeg can read', () => {
-    expect(concatList(['C:\\a\\b.ts', "/x/it's.ts"])).toBe("file 'C:/a/b.ts'\nfile '/x/it'\\''s.ts'\n")
+  it('saves by remuxing segments streamed into stdin', () => {
+    const args = saveArgs('C:\\clips\\Replay.mp4')
+    expect(args.slice(args.indexOf('-f'), args.indexOf('-i') + 2)).toEqual(['-f', 'mpegts', '-i', 'pipe:0'])
+    expect(args).toContain('copy')
+    expect(args).not.toContain('concat')
+    expect(args.at(-1)).toBe('C:\\clips\\Replay.mp4')
+  })
+})
+
+describe('audio clock', () => {
+  const second = SAMPLE_RATE
+
+  it('leaves a track alone while it keeps up with the clock', () => {
+    expect(silenceDue({ startMs: 0, frames: second }, 1000)).toBe(0)
+    // Jitter within the slack is not a stall.
+    expect(silenceDue({ startMs: 0, frames: second - AUDIO_SLACK_FRAMES }, 1000)).toBe(0)
+    expect(runsAhead({ startMs: 0, frames: second }, 1000, 960)).toBe(false)
+  })
+
+  it('fills a stall with silence up to the clock', () => {
+    // 3 s in, only 1 s written: the audio device stopped for 2 s.
+    expect(silenceDue({ startMs: 0, frames: second }, 3000)).toBe(2 * second)
+  })
+
+  it('fills long gaps a piece at a time', () => {
+    // Half an hour behind (the machine slept): never one giant buffer.
+    expect(silenceDue({ startMs: 0, frames: 0 }, 30 * 60_000)).toBe(MAX_SILENCE_FRAMES)
+  })
+
+  it('drops chunks that would run ahead of the clock', () => {
+    expect(runsAhead({ startMs: 0, frames: second + AUDIO_SLACK_FRAMES }, 1000, 960)).toBe(true)
   })
 })
 

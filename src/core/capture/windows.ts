@@ -112,8 +112,7 @@ export function buildWindowsArgs(l: WindowsLaunch): string[] {
     'mpegts',
     '-segment_wrap',
     String(ringSize(l.capture.bufferSeconds)),
-    '-reset_timestamps',
-    '1',
+    // Timestamps stay continuous across segments (no -reset_timestamps): a save joins them byte for byte.
     `${l.segmentDir.replace(/\\/g, '/')}/seg%05d.ts`
   )
   return args
@@ -156,9 +155,60 @@ export function pickSegments(segments: Segment[], seconds: number | null): Segme
   return ordered.slice(-count)
 }
 
-/** A concat demuxer list; single quotes in paths are escaped the way FFmpeg expects. */
-export const concatList = (paths: string[]): string =>
-  paths.map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n') + '\n'
+/**
+ * Remux of the picked segments, fed to stdin one after another. MPEG-TS joins byte for byte, so the
+ * recording's own timestamps carry through. The concat demuxer instead lines files up by their
+ * durations, and a segment whose audio sits some seconds off its video then counts as that many
+ * seconds long: every segment adds the offset again (a 2 minute buffer became a 30 minute clip).
+ */
+export const saveArgs = (output: string): string[] => [
+  '-hide_banner',
+  '-loglevel',
+  'error',
+  '-y',
+  '-f',
+  'mpegts',
+  '-i',
+  'pipe:0',
+  '-map',
+  '0',
+  '-c',
+  'copy',
+  '-movflags',
+  '+faststart',
+  output
+]
+
+/**
+ * Wall-clock pacing for a raw audio track. FFmpeg times raw PCM by counting samples while ddagrab
+ * stamps video with the clock, so audio that stalls (a suspended audio device, sleep) or runs fast
+ * would drift away from the video for the rest of the session. Silence fills a stall and a chunk
+ * that runs ahead is dropped, keeping the track within `AUDIO_SLACK_FRAMES` of the clock.
+ */
+export interface AudioClock {
+  /** When the track started, in milliseconds on a monotonic clock. */
+  startMs: number
+  /** Frames written so far. */
+  frames: number
+}
+
+/** How far a track may run behind or ahead of the clock before it is corrected (200 ms). */
+export const AUDIO_SLACK_FRAMES = SAMPLE_RATE / 5
+/** The most silence written in one go (10 s); a longer gap is filled over several calls. */
+export const MAX_SILENCE_FRAMES = SAMPLE_RATE * 10
+
+const dueFrames = (clock: AudioClock, nowMs: number): number =>
+  Math.floor(((nowMs - clock.startMs) * SAMPLE_RATE) / 1000)
+
+/** Frames of silence to write now so the track catches up with the clock (0 while it keeps up). */
+export function silenceDue(clock: AudioClock, nowMs: number): number {
+  const behind = dueFrames(clock, nowMs) - clock.frames
+  return behind > AUDIO_SLACK_FRAMES ? Math.min(behind, MAX_SILENCE_FRAMES) : 0
+}
+
+/** Whether a chunk arriving now would put the track too far ahead of the clock (it is dropped). */
+export const runsAhead = (clock: AudioClock, nowMs: number, frames: number): boolean =>
+  clock.frames + frames - dueFrames(clock, nowMs) > AUDIO_SLACK_FRAMES
 
 /** `reg query` output → the value of `name` (REG_DWORD as a number, REG_SZ as a string). */
 export function parseRegValue(stdout: string, name: string): string | number | null {

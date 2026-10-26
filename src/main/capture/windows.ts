@@ -1,7 +1,10 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { createReadStream } from 'node:fs'
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
+import { performance } from 'node:perf_hooks'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, type NativeImage } from 'electron'
 import {
@@ -14,10 +17,14 @@ import {
 } from '@shared/ipc'
 import {
   buildWindowsArgs,
-  concatList,
+  CHANNELS,
   ENCODER_VENDORS,
   pickSegments,
   probeArgs,
+  runsAhead,
+  saveArgs,
+  silenceDue,
+  type AudioClock,
   type EncoderVendor,
   type Segment
 } from '@core/capture/windows'
@@ -35,6 +42,10 @@ const VENDOR_LABELS: Record<EncoderVendor, string> = {
 }
 
 const pidFile = (): string => join(app.getPath('userData'), 'capture.pid')
+/** Bytes per frame of interleaved float32 PCM. */
+const FRAME_BYTES = CHANNELS * 4
+/** How often stalled audio tracks are topped up with silence. */
+const PACE_MS = 100
 
 /** FFmpeg builds that can grab the desktop (ddagrab needs FFmpeg 6+ with D3D11). */
 async function findFfmpeg(): Promise<{ path: string; version: string } | null> {
@@ -84,6 +95,30 @@ async function killStale(): Promise<void> {
   await rm(pidFile(), { force: true })
 }
 
+/** Runs FFmpeg with `files` streamed into its stdin one after another. */
+async function remux(ffmpeg: string, args: string[], files: string[]): Promise<void> {
+  const child = spawn(ffmpeg, args, { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true })
+  let stderr = ''
+  child.stderr.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-4000)))
+  child.stdin.on('error', () => {})
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('exit', (code) => resolve(code))
+  })
+  const timer = setTimeout(() => child.kill(), 60_000)
+  try {
+    // A write error means FFmpeg quit early; its exit code and stderr say why.
+    const fed = (async () => {
+      for (const file of files) await pipeline(createReadStream(file), child.stdin, { end: false })
+      child.stdin.end()
+    })().catch(() => child.stdin.destroy())
+    const [code] = await Promise.all([exited, fed])
+    if (code !== 0) throw new Error(stderr.trim().split('\n').at(-1) || `FFmpeg exited with code ${code}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export class WindowsBackend implements CaptureBackend {
   readonly kind = 'ffmpeg' as const
   private ffmpeg: { path: string; version: string } | null = null
@@ -95,16 +130,32 @@ export class WindowsBackend implements CaptureBackend {
   private stagingDir: string | null = null
   private audioWindow: BrowserWindow | null = null
   private readonly servers: Server[] = []
-  private readonly sockets = new Map<CaptureTrack, Socket>()
+  private readonly sockets = new Map<CaptureTrack, { socket: Socket; clock: AudioClock }>()
+  private pacer: NodeJS.Timeout | null = null
   private readonly exitListeners = new Set<(reason: string) => void>()
 
   constructor() {
     ipcMain.on(WINCAP_IPC.pcm, (event, track: CaptureTrack, pcm: Uint8Array) => {
       if (event.sender !== this.audioWindow?.webContents) return
-      const socket = this.sockets.get(track)
+      const pipe = this.sockets.get(track)
       // Before FFmpeg has connected (or after it stopped), audio has nowhere to go and is dropped.
-      if (socket && !socket.destroyed) socket.write(Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength))
+      if (!pipe || pipe.socket.destroyed) return
+      const frames = pcm.byteLength / FRAME_BYTES
+      if (runsAhead(pipe.clock, performance.now(), frames)) return
+      pipe.socket.write(Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength))
+      pipe.clock.frames += frames
     })
+  }
+
+  /** Fills audio stalls with silence, so FFmpeg's sample-counted audio keeps time with ddagrab's clock. */
+  private pace(): void {
+    const now = performance.now()
+    for (const { socket, clock } of this.sockets.values()) {
+      const frames = silenceDue(clock, now)
+      if (!frames || socket.destroyed) continue
+      socket.write(Buffer.alloc(frames * FRAME_BYTES))
+      clock.frames += frames
+    }
   }
 
   /** The hidden page that captures system audio and the mic (see renderer/src/capture). */
@@ -202,7 +253,7 @@ export class WindowsBackend implements CaptureBackend {
   private async audioPipe(track: CaptureTrack): Promise<string> {
     const path = `\\\\.\\pipe\\podium-${track}-${process.pid}`
     const server = createServer((socket) => {
-      this.sockets.set(track, socket)
+      this.sockets.set(track, { socket, clock: { startMs: performance.now(), frames: 0 } })
       socket.on('error', () => this.sockets.delete(track))
       socket.on('close', () => this.sockets.delete(track))
     })
@@ -235,6 +286,7 @@ export class WindowsBackend implements CaptureBackend {
     const pipes: string[] = []
     for (const track of order.filter((t) => audio.started.includes(t)))
       pipes.push(await this.audioPipe(track))
+    if (pipes.length) this.pacer = setInterval(() => this.pace(), PACE_MS)
 
     const args = buildWindowsArgs({
       capture: config.capture,
@@ -274,7 +326,9 @@ export class WindowsBackend implements CaptureBackend {
   }
 
   private async cleanupAudio(): Promise<void> {
-    for (const socket of this.sockets.values()) socket.destroy()
+    if (this.pacer) clearInterval(this.pacer)
+    this.pacer = null
+    for (const { socket } of this.sockets.values()) socket.destroy()
     this.sockets.clear()
     for (const server of this.servers.splice(0)) server.close()
     if (this.audioWindow && !this.audioWindow.isDestroyed()) {
@@ -313,37 +367,12 @@ export class WindowsBackend implements CaptureBackend {
     }
     const picked = pickSegments(segments, seconds)
     if (!picked.length) throw new Error('Nothing has been recorded yet')
-    const stamp = Date.now()
-    const list = join(this.stagingDir, `concat-${stamp}.txt`)
-    const output = join(this.stagingDir, `Replay_${stamp}.mp4`)
-    await writeFile(list, concatList(picked.map((s) => s.path)))
-    try {
-      await exec(
-        this.ffmpeg!.path,
-        [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-y',
-          '-f',
-          'concat',
-          '-safe',
-          '0',
-          '-i',
-          list,
-          '-map',
-          '0',
-          '-c',
-          'copy',
-          '-movflags',
-          '+faststart',
-          output
-        ],
-        { timeout: 60_000, windowsHide: true }
-      )
-    } finally {
-      await rm(list, { force: true })
-    }
+    const output = join(this.stagingDir, `Replay_${Date.now()}.mp4`)
+    await remux(
+      this.ffmpeg!.path,
+      saveArgs(output),
+      picked.map((s) => s.path)
+    )
     return output
   }
 

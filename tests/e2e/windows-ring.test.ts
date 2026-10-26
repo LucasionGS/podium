@@ -1,10 +1,10 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { createWriteStream, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createWriteStream, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/ipc'
-import { buildWindowsArgs, CHANNELS, concatList, pickSegments, SAMPLE_RATE } from '@core/capture/windows'
+import { buildWindowsArgs, CHANNELS, pickSegments, SAMPLE_RATE, saveArgs } from '@core/capture/windows'
 
 /**
  * The Windows engine can't run here, but everything after the grabber can: this runs the exact
@@ -29,6 +29,11 @@ const probe = (
     streams: Array<{ codec_type: string; duration: string }>
   }
   return { duration: Number(data.format.duration), streams: data.streams }
+}
+
+/** Saves the way the engine does: the segments streamed into FFmpeg's stdin, one after another. */
+const save = (paths: string[], output: string): void => {
+  execFileSync('ffmpeg', saveArgs(output), { input: Buffer.concat(paths.map((p) => readFileSync(p))) })
 }
 
 describe.skipIf(process.platform !== 'linux')('Windows segment ring (simulated)', () => {
@@ -79,28 +84,16 @@ describe.skipIf(process.platform !== 'linux')('Windows segment ring (simulated)'
     })
     // The ring wraps at bufferSeconds + 3 files, however long it has been recording.
     expect(segments.length).toBeLessThanOrEqual(8)
-    const list = join(work, 'list.txt')
-    writeFileSync(list, concatList(pickSegments(segments, 3).map((s) => s.path)))
     const output = join(work, 'clip.mp4')
-    execFileSync('ffmpeg', [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-y',
-      '-f',
-      'concat',
-      '-safe',
-      '0',
-      '-i',
-      list,
-      '-map',
-      '0',
-      '-c',
-      'copy',
-      '-movflags',
-      '+faststart',
+    save(
+      pickSegments(segments, 3).map((s) => s.path),
       output
-    ])
+    )
+    const whole = join(work, 'whole.mp4')
+    save(
+      pickSegments(segments, null).map((s) => s.path),
+      whole
+    )
 
     ffmpeg.stdin.end('q')
     streams.forEach((s) => s.end())
@@ -115,5 +108,13 @@ describe.skipIf(process.platform !== 'linux')('Windows segment ring (simulated)'
     // Audio and video cover the same stretch (raw PCM has no timestamps of its own to drift with).
     const [video, ...audio] = clip.streams.map((s) => Number(s.duration))
     for (const track of audio) expect(Math.abs(track - video!)).toBeLessThan(0.25)
+
+    // The whole ring is as long as the segments in it. Joined by the concat demuxer, every segment
+    // whose audio sat a little off its video added that offset again (minutes, on a real buffer).
+    const full = probe(whole)
+    expect(full.duration).toBeGreaterThanOrEqual(capture.bufferSeconds)
+    expect(full.duration).toBeLessThanOrEqual(capture.bufferSeconds + 3.2)
+    const [ringVideo, ...ringAudio] = full.streams.map((s) => Number(s.duration))
+    for (const track of ringAudio) expect(Math.abs(track - ringVideo!)).toBeLessThan(0.25)
   }, 60_000)
 })
