@@ -385,6 +385,7 @@ if (squirrelEvent) {
     const mayCapture =
       !isAutomatedRun || process.env['PODIUM_BACKEND'] === 'fake' || process.env['PODIUM_REAL_CAPTURE']
     if (currentSettings.bufferOnLaunch && mayCapture) step('capture', () => capture.start())
+    step('power', () => capture.watchPower())
   })
 
   app.on('before-quit', () => {

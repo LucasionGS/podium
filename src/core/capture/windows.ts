@@ -83,7 +83,8 @@ export const ringSize = (bufferSeconds: number): number =>
   Math.ceil(clampBuffer(bufferSeconds) / SEGMENT_SECONDS) + 3
 
 export function buildWindowsArgs(l: WindowsLaunch): string[] {
-  const args = ['-hide_banner', '-loglevel', 'error', '-nostats', '-y']
+  // `-progress` reports the frame count on stdout, so Podium notices when the video stops (see FrameWatch).
+  const args = ['-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-y']
   args.push('-f', 'lavfi', '-i', ddagrabSource(l.outputIndex, l.capture.fps, l.capture.cursor))
   for (const pipe of l.audioPipes) {
     args.push(
@@ -137,6 +138,53 @@ export function probeArgs(vendor: EncoderVendor, codec: VideoCodec, outputIndex:
   ]
 }
 
+/** How long the video may go without a new frame before the recording is restarted. */
+export const STALL_MS = 10_000
+
+/**
+ * Follows FFmpeg's `-progress` output and tells when video frames stop coming. FFmpeg 6.1's ddagrab
+ * ends its stream for good when Windows takes Desktop Duplication away (lock screen, UAC prompt, sleep,
+ * a display mode change), and FFmpeg carries on with the audio alone: segments are only cut on video
+ * keyframes, so one segment then grows for as long as Podium runs, and clips saved from it are hours long.
+ */
+export class FrameWatch {
+  private frames = -1
+  private changedMs: number
+  private partial = ''
+
+  constructor(
+    startMs: number,
+    private readonly stallMs = STALL_MS
+  ) {
+    this.changedMs = startMs
+  }
+
+  /** Feeds a chunk of `-progress` output (`frame=123` lines among others). */
+  feed(text: string, nowMs: number): void {
+    const lines = (this.partial + text).split(/\r?\n/)
+    this.partial = lines.pop() ?? ''
+    for (const line of lines) {
+      const match = /^frame=(\d+)$/.exec(line.trim())
+      if (!match) continue
+      const frames = Number(match[1])
+      if (frames > this.frames) this.changedMs = nowMs
+      this.frames = frames
+    }
+  }
+
+  /** True once no new frame has been counted for `stallMs`. */
+  stalled(nowMs: number): boolean {
+    return nowMs - this.changedMs > this.stallMs
+  }
+}
+
+/**
+ * A gap this long between two ticks of the capture watchdog means Podium was frozen: the PC slept or
+ * went into Modern Standby. ddagrab's clock counts the sleep and the audio's doesn't, so the recording
+ * is restarted rather than carried across it.
+ */
+export const FROZEN_MS = 5000
+
 export interface Segment {
   path: string
   size: number
@@ -161,7 +209,7 @@ export function pickSegments(segments: Segment[], seconds: number | null): Segme
  * durations, and a segment whose audio sits some seconds off its video then counts as that many
  * seconds long: every segment adds the offset again (a 2 minute buffer became a 30 minute clip).
  */
-export const saveArgs = (output: string): string[] => [
+export const saveArgs = (output: string, maxSeconds?: number): string[] => [
   '-hide_banner',
   '-loglevel',
   'error',
@@ -174,6 +222,8 @@ export const saveArgs = (output: string): string[] => [
   '0',
   '-c',
   'copy',
+  // A cap at the length of the joined segments: one broken segment can't stretch a clip to hours.
+  ...(maxSeconds ? ['-t', String(maxSeconds)] : []),
   '-movflags',
   '+faststart',
   output

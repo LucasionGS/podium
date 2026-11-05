@@ -4,6 +4,7 @@ import {
   AUDIO_SLACK_FRAMES,
   buildWindowsArgs,
   encoderName,
+  FrameWatch,
   MAX_SILENCE_FRAMES,
   parseRegValue,
   pickSegments,
@@ -35,6 +36,8 @@ describe('Windows capture arguments', () => {
     expect(args.at(-1)).toBe('C:/Users/me/Videos/Podium/.podium/ring/seg%05d.ts')
     // Saves join segments byte for byte, which needs the recording's continuous timestamps.
     expect(args).not.toContain('-reset_timestamps')
+    // Progress on stdout lets Podium notice when the video stops.
+    expect(flag('-progress')).toBe('pipe:1')
     // Two raw PCM pipes become two audio tracks.
     expect(args.filter((a) => a === 'f32le')).toHaveLength(2)
     expect(args.filter((a) => a === '-map')).toHaveLength(3)
@@ -100,6 +103,36 @@ describe('segment ring', () => {
     expect(args).toContain('copy')
     expect(args).not.toContain('concat')
     expect(args.at(-1)).toBe('C:\\clips\\Replay.mp4')
+  })
+
+  it('caps a saved clip at the length of the segments it joins', () => {
+    const args = saveArgs('clip.mp4', 32)
+    expect(args[args.indexOf('-t') + 1]).toBe('32')
+    expect(saveArgs('clip.mp4')).not.toContain('-t')
+  })
+})
+
+describe('FrameWatch', () => {
+  it('stays calm while frames keep coming, in chunks that split lines', () => {
+    const watch = new FrameWatch(0)
+    watch.feed('frame=60\nfps=60.0\nprogress=continue\nfra', 1000)
+    watch.feed('me=120\n', 2000)
+    expect(watch.stalled(11_000)).toBe(false)
+    expect(watch.stalled(12_500)).toBe(true)
+  })
+
+  it('notices video that stopped while FFmpeg keeps reporting', () => {
+    // ddagrab lost Desktop Duplication: FFmpeg runs on with the audio, the frame count stands still.
+    const watch = new FrameWatch(0)
+    watch.feed('frame=300\r\nprogress=continue\r\n', 5000)
+    for (let t = 6000; t <= 16_000; t += 1000) watch.feed('frame=300\nprogress=continue\n', t)
+    expect(watch.stalled(15_001)).toBe(true)
+  })
+
+  it('gives a slow start the same grace', () => {
+    const watch = new FrameWatch(0)
+    expect(watch.stalled(9000)).toBe(false)
+    expect(watch.stalled(10_001)).toBe(true)
   })
 })
 

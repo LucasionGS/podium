@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, powerMonitor } from 'electron'
 import {
   CAPTURE_IPC,
   type AppSettings,
@@ -22,6 +22,11 @@ import { WindowsBackend } from './windows'
 
 /** Restart delays after the engine dies on its own; after the last one we give up and show the error. */
 const RESTART_DELAYS_MS = [1000, 3000, 10_000]
+/**
+ * The Windows engine keeps trying at this interval after that: Windows withholds the screen for as long
+ * as a lock screen or UAC prompt is up, and the buffer should come back by itself afterwards.
+ */
+const PERSISTENT_RETRY_MS = 30_000
 
 export class CaptureManager {
   private readonly backend: CaptureBackend
@@ -76,6 +81,34 @@ export class CaptureManager {
         ? image.resize({ width: Math.min(width, 480) })
         : image.resize({ height: Math.min(height, 480) })
     return `data:image/jpeg;base64,${small.toJPEG(75).toString('base64')}`
+  }
+
+  /**
+   * Stops the buffer when the system sleeps and starts it again on wake. On Windows the video clock
+   * counts the sleep and the audio's doesn't, so a recording carried across it never lines up again.
+   * Call once the app is ready.
+   */
+  watchPower(): void {
+    if (this.backend.kind !== 'ffmpeg') return
+    let wasRunning = false
+    powerMonitor.on('suspend', () => {
+      wasRunning = this.status.state === 'buffering' || this.status.state === 'starting'
+      if (wasRunning) void this.stop()
+    })
+    powerMonitor.on('resume', () => {
+      if (!wasRunning) return
+      wasRunning = false
+      // Give the GPU and audio devices a moment to come back. Windows usually wakes to the lock screen,
+      // where capture fails; the restart path keeps trying until it works.
+      this.restarts = 0
+      this.scheduleRestart(3000)
+    })
+    // The engine can't capture the lock screen and fails while it's up; try again as soon as it's gone.
+    powerMonitor.on('unlock-screen', () => {
+      if (this.status.state !== 'error') return
+      this.restarts = 0
+      this.scheduleRestart(1000)
+    })
   }
 
   getStatus(): CaptureStatus {
@@ -183,12 +216,24 @@ export class CaptureManager {
     const delay = RESTART_DELAYS_MS[this.restarts]
     if (delay === undefined) {
       this.setStatus({ state: 'error', since: null, message: reason })
+      if (this.backend.kind === 'ffmpeg') this.scheduleRestart(PERSISTENT_RETRY_MS)
       return
     }
     this.restarts++
     this.setStatus({ state: 'starting', since: null, message: `Restarting: ${reason}` })
+    this.scheduleRestart(delay)
+  }
+
+  private scheduleRestart(delay: number): void {
+    if (this.restartTimer) clearTimeout(this.restartTimer)
     this.restartTimer = setTimeout(() => {
+      this.restartTimer = null
       void this.start().then(() => {
+        // A restart that fails to start counts as another crash.
+        if (this.status.state === 'error') {
+          this.handleCrash(this.status.message ?? 'The capture engine failed to start')
+          return
+        }
         // A buffer that stays up for a minute has recovered; later crashes get the full retry budget again.
         setTimeout(() => {
           if (this.status.state === 'buffering') this.restarts = 0

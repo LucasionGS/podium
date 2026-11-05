@@ -19,10 +19,13 @@ import {
   buildWindowsArgs,
   CHANNELS,
   ENCODER_VENDORS,
+  FrameWatch,
+  FROZEN_MS,
   pickSegments,
   probeArgs,
   runsAhead,
   saveArgs,
+  SEGMENT_SECONDS,
   silenceDue,
   type AudioClock,
   type EncoderVendor,
@@ -132,6 +135,8 @@ export class WindowsBackend implements CaptureBackend {
   private readonly servers: Server[] = []
   private readonly sockets = new Map<CaptureTrack, { socket: Socket; clock: AudioClock }>()
   private pacer: NodeJS.Timeout | null = null
+  private watchdog: NodeJS.Timeout | null = null
+  private restartReason: string | null = null
   private readonly exitListeners = new Set<(reason: string) => void>()
 
   constructor() {
@@ -297,11 +302,14 @@ export class WindowsBackend implements CaptureBackend {
       audioPipes: pipes
     })
     console.log('[ffmpeg] starting:', this.ffmpeg!.path, args.join(' '))
-    const child = spawn(this.ffmpeg!.path, args, { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true })
+    const child = spawn(this.ffmpeg!.path, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
     this.child = child
     this.stopping = false
+    this.restartReason = null
     this.stderr = ''
     child.stderr?.on('data', (d: Buffer) => (this.stderr = (this.stderr + d.toString()).slice(-4000)))
+    const frames = new FrameWatch(performance.now())
+    child.stdout?.on('data', (d: Buffer) => frames.feed(d.toString(), performance.now()))
     if (child.pid) await writeFile(pidFile(), String(child.pid)).catch(() => {})
 
     await new Promise<void>((resolve, reject) => {
@@ -316,18 +324,47 @@ export class WindowsBackend implements CaptureBackend {
       const timer = setTimeout(() => settle(), 3000)
       child.once('error', (error) => settle(error))
       child.once('exit', (code) => {
-        const reason = this.stderr.trim().split('\n').at(-1) || `FFmpeg exited with code ${code}`
+        const reason =
+          this.restartReason ?? (this.stderr.trim().split('\n').at(-1) || `FFmpeg exited with code ${code}`)
         if (this.child === child) this.child = null
         void this.cleanupAudio()
         if (!settled) settle(new Error(reason))
         else if (!this.stopping) for (const listener of this.exitListeners) listener(reason)
       })
     })
+    this.startWatchdog(frames)
+  }
+
+  /** Restarts the recording when the video stops coming or Podium was frozen (sleep). */
+  private startWatchdog(frames: FrameWatch): void {
+    let last = { wall: Date.now(), mono: performance.now() }
+    this.watchdog = setInterval(() => {
+      const now = { wall: Date.now(), mono: performance.now() }
+      const gap = Math.max(now.wall - last.wall, now.mono - last.mono)
+      last = now
+      if (gap > FROZEN_MS) {
+        this.restartFor(`Podium was paused for ${Math.round(gap / 1000)} s (sleep?); restarting the buffer`)
+      } else if (frames.stalled(now.mono)) {
+        this.restartFor('The screen capture stopped (lock screen, UAC prompt or display change?); restarting')
+      }
+    }, 250)
+  }
+
+  /** Ends FFmpeg so the manager starts a fresh recording (it restarts engines that exit on their own). */
+  private restartFor(reason: string): void {
+    if (!this.child || this.stopping) return
+    console.warn('[capture]', reason)
+    this.restartReason = reason
+    if (this.watchdog) clearInterval(this.watchdog)
+    this.watchdog = null
+    this.child.kill()
   }
 
   private async cleanupAudio(): Promise<void> {
     if (this.pacer) clearInterval(this.pacer)
     this.pacer = null
+    if (this.watchdog) clearInterval(this.watchdog)
+    this.watchdog = null
     for (const { socket } of this.sockets.values()) socket.destroy()
     this.sockets.clear()
     for (const server of this.servers.splice(0)) server.close()
@@ -370,7 +407,7 @@ export class WindowsBackend implements CaptureBackend {
     const output = join(this.stagingDir, `Replay_${Date.now()}.mp4`)
     await remux(
       this.ffmpeg!.path,
-      saveArgs(output),
+      saveArgs(output, (picked.length + 1) * SEGMENT_SECONDS),
       picked.map((s) => s.path)
     )
     return output
