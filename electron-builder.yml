@@ -40,6 +40,10 @@ deb:
   packageCategory: video
 win:
   icon: resources/icon.png
+  # Records desktop audio from the chosen output (WASAPI loopback); `pnpm build:audio` builds it.
+  extraResources:
+    - from: resources/win/podium-audio.exe
+      to: podium-audio.exe
   # Squirrel installs per user (no admin) and updates itself from the GitHub releases (see src/main/update).
   target: [squirrel]
   files:

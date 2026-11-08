@@ -3,6 +3,12 @@ import { Select } from '@/ui/Field'
 import { updateSettings, useApp } from '@/store/app'
 import { Group, Row } from './Row'
 
+/** Linux device names are readable; Windows endpoint ids (`{0.0.0.00000000}.{…}`) are not. */
+const missingLabel = (id: string): string => {
+  const name = id.replace(/^device:/, '')
+  return name.startsWith('{') ? 'A device that isn’t connected' : `${name} (not connected)`
+}
+
 function DeviceSelect({
   value,
   devices,
@@ -29,7 +35,7 @@ function DeviceSelect({
           {d.label}
         </option>
       ))}
-      {missing && <option value={value}>{value.replace(/^device:/, '')} (not connected)</option>}
+      {missing && <option value={value}>{missingLabel(value)}</option>}
     </Select>
   )
 }
@@ -41,7 +47,10 @@ export function AudioSettings() {
   return (
     <>
       <Group title="Tracks">
-        <Row label="Desktop and game audio" hint="Everything you hear. Recorded as its own track.">
+        <Row
+          label="Desktop and game audio"
+          hint="Everything you hear, or one output device. Recorded as its own track."
+        >
           <DeviceSelect
             label="Desktop audio"
             value={audio.desktop}

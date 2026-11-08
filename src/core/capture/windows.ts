@@ -1,10 +1,11 @@
-import type { AudioSettings, CaptureSettings, VideoCodec } from '@shared/ipc'
+import type { AudioDevice, AudioSettings, CaptureSettings, VideoCodec } from '@shared/ipc'
 import { clampBuffer } from './gsr'
 
 /**
  * Windows capture: FFmpeg grabs the desktop with `ddagrab` (Desktop Duplication, frames stay on the
  * GPU) and encodes it with the GPU's encoder into a ring of one-second MPEG-TS segments. Audio comes
- * in as raw PCM over named pipes (Chromium captures system audio loopback and the microphone).
+ * in as raw PCM over named pipes: desktop audio from `podium-audio.exe` (WASAPI loopback on the chosen
+ * output), the microphone from Chromium.
  */
 
 export type EncoderVendor = 'nvenc' | 'amf' | 'qsv' | 'software'
@@ -270,4 +271,63 @@ export function parseRegValue(stdout: string, name: string): string | number | n
     return value
   }
   return null
+}
+
+/** The setting that follows the Windows default output; anything else is `device:<endpoint id>`. */
+export const DEFAULT_OUTPUT_ID = 'default_output'
+
+/**
+ * `podium-audio list`: one JSON object per active output, e.g.
+ * {"id":"{0.0.0.00000000}.{5c201e7a-80af-4291-9fbd-9e48b5242359}","name":"Speakers (Realtek(R) Audio)","default":true}
+ * The default output comes first, as "Default output", followed by every device by name.
+ */
+export function parseOutputDevices(stdout: string): AudioDevice[] {
+  const devices: AudioDevice[] = [{ id: DEFAULT_OUTPUT_ID, label: 'Default output', kind: 'output' }]
+  for (const line of stdout.split(/\r?\n/)) {
+    let entry: unknown
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const {
+      id,
+      name,
+      default: isDefault
+    } = (entry ?? {}) as { id?: unknown; name?: unknown; default?: unknown }
+    if (typeof id !== 'string' || !id) continue
+    const label = typeof name === 'string' && name ? name : id
+    devices.push({
+      id: `device:${id}`,
+      label: isDefault ? `${label} (current default)` : label,
+      kind: 'output'
+    })
+    if (isDefault) devices[0]!.label = `Default output (${label})`
+  }
+  return devices
+}
+
+/** Arguments for `podium-audio capture`: the default output follows Windows, a `device:` id is pinned. */
+export function helperCaptureArgs(desktop: string): string[] {
+  return desktop.startsWith('device:')
+    ? ['capture', '--device', desktop.slice('device:'.length)]
+    : ['capture']
+}
+
+/** Splits a stream of PCM bytes into whole frames: what can be sent now, and the bytes left for the next chunk. */
+export function takeFrames(
+  carry: Uint8Array,
+  chunk: Uint8Array,
+  frameBytes: number
+): [Uint8Array, Uint8Array] {
+  const all = carry.length ? concat(carry, chunk) : chunk
+  const whole = all.length - (all.length % frameBytes)
+  return [all.subarray(0, whole), all.slice(whole)]
+}
+
+function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length)
+  out.set(a)
+  out.set(b, a.length)
+  return out
 }

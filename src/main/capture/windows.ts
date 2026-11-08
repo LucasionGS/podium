@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { createInterface } from 'node:readline'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, type NativeImage } from 'electron'
@@ -21,12 +22,15 @@ import {
   ENCODER_VENDORS,
   FrameWatch,
   FROZEN_MS,
+  helperCaptureArgs,
+  parseOutputDevices,
   pickSegments,
   probeArgs,
   runsAhead,
   saveArgs,
   SEGMENT_SECONDS,
   silenceDue,
+  takeFrames,
   type AudioClock,
   type EncoderVendor,
   type Segment
@@ -49,6 +53,16 @@ const pidFile = (): string => join(app.getPath('userData'), 'capture.pid')
 const FRAME_BYTES = CHANNELS * 4
 /** How often stalled audio tracks are topped up with silence. */
 const PACE_MS = 100
+/** The longest wait before restarting a desktop audio helper that keeps exiting. */
+const HELPER_MAX_BACKOFF_MS = 30_000
+/** How long a stopped helper gets to exit on its own before it is killed. */
+const HELPER_STOP_MS = 1500
+
+/** `podium-audio.exe` records desktop audio (WASAPI loopback); built from native/podium-audio. */
+const helperPath = (): string =>
+  app.isPackaged
+    ? join(process.resourcesPath, 'podium-audio.exe')
+    : join(app.getAppPath(), 'resources', 'win', 'podium-audio.exe')
 
 /** FFmpeg builds that can grab the desktop (ddagrab needs FFmpeg 6+ with D3D11). */
 async function findFfmpeg(): Promise<{ path: string; version: string } | null> {
@@ -132,6 +146,8 @@ export class WindowsBackend implements CaptureBackend {
   private segmentDir: string | null = null
   private stagingDir: string | null = null
   private audioWindow: BrowserWindow | null = null
+  private helper: ChildProcess | null = null
+  private helperTimer: NodeJS.Timeout | null = null
   private readonly servers: Server[] = []
   private readonly sockets = new Map<CaptureTrack, { socket: Socket; clock: AudioClock }>()
   private pacer: NodeJS.Timeout | null = null
@@ -141,15 +157,66 @@ export class WindowsBackend implements CaptureBackend {
 
   constructor() {
     ipcMain.on(WINCAP_IPC.pcm, (event, track: CaptureTrack, pcm: Uint8Array) => {
-      if (event.sender !== this.audioWindow?.webContents) return
-      const pipe = this.sockets.get(track)
-      // Before FFmpeg has connected (or after it stopped), audio has nowhere to go and is dropped.
-      if (!pipe || pipe.socket.destroyed) return
-      const frames = pcm.byteLength / FRAME_BYTES
-      if (runsAhead(pipe.clock, performance.now(), frames)) return
-      pipe.socket.write(Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength))
-      pipe.clock.frames += frames
+      if (event.sender === this.audioWindow?.webContents) this.feed(track, pcm)
     })
+  }
+
+  /** Writes whole frames of PCM to a track's pipe, unless they would run ahead of the clock. */
+  private feed(track: CaptureTrack, pcm: Uint8Array): void {
+    const pipe = this.sockets.get(track)
+    // Before FFmpeg has connected (or after it stopped), audio has nowhere to go and is dropped.
+    if (!pipe || pipe.socket.destroyed) return
+    const frames = pcm.byteLength / FRAME_BYTES
+    if (runsAhead(pipe.clock, performance.now(), frames)) return
+    pipe.socket.write(Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength))
+    pipe.clock.frames += frames
+  }
+
+  /**
+   * Runs the desktop audio helper, restarting it if it exits while recording. While it is down the
+   * track carries on as silence (the pacer fills it), so the recording itself never stops for audio.
+   */
+  private startHelper(desktop: string, failures = 0): void {
+    const startedAt = performance.now()
+    const child = spawn(helperPath(), helperCaptureArgs(desktop), {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    this.helper = child
+    let carry: Uint8Array = new Uint8Array()
+    child.stdout.on('data', (chunk: Buffer) => {
+      // A stopped helper's last buffered output must not reach the next recording's track.
+      if (this.helper !== child) return
+      const [whole, rest] = takeFrames(carry, chunk, FRAME_BYTES)
+      carry = rest
+      if (whole.length) this.feed('desktop', whole)
+    })
+    // Its log lines start with `[podium-audio]`.
+    createInterface({ input: child.stderr }).on('line', (line) => line.trim() && console.log(line.trim()))
+    child.stdin.on('error', () => {})
+    child.once('error', (error) => console.warn('[capture] desktop audio helper:', error.message))
+    child.once('close', (code) => {
+      if (this.helper !== child) return
+      this.helper = null
+      // One that ran for a while is restarted at once; one that keeps failing is retried less and less often.
+      const failed = performance.now() - startedAt < HELPER_MAX_BACKOFF_MS ? failures + 1 : 0
+      const delay = Math.min(HELPER_MAX_BACKOFF_MS, failed ? 1000 * 2 ** (failed - 1) : 0)
+      console.warn(`[capture] desktop audio helper exited (${code}); restarting in ${delay / 1000} s`)
+      this.helperTimer = setTimeout(() => this.startHelper(desktop, failed), delay)
+    })
+  }
+
+  private stopHelper(): void {
+    if (this.helperTimer) clearTimeout(this.helperTimer)
+    this.helperTimer = null
+    const child = this.helper
+    this.helper = null
+    if (!child) return
+    // Closing stdin is its signal to exit (it releases the audio device cleanly); the kill is for one that is stuck.
+    child.stdin?.end()
+    setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill()
+    }, HELPER_STOP_MS)
   }
 
   /** Fills audio stalls with silence, so FFmpeg's sample-counted audio keeps time with ddagrab's clock. */
@@ -167,17 +234,11 @@ export class WindowsBackend implements CaptureBackend {
   private async agent(): Promise<BrowserWindow> {
     if (this.audioWindow && !this.audioWindow.isDestroyed()) return this.audioWindow
     const captureSession = session.fromPartition(PARTITION)
-    // This page, and only this one, may use the microphone and system audio.
+    // This page, and only this one, may use the microphone.
     captureSession.setPermissionRequestHandler((_wc, permission, callback) =>
-      callback(permission === 'media' || permission === 'display-capture')
+      callback(permission === 'media')
     )
     captureSession.setPermissionCheckHandler((_wc, permission) => permission === 'media')
-    captureSession.setDisplayMediaRequestHandler((_request, callback) => {
-      void desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-        // The video is discarded; `loopback` is what we want: everything the system plays.
-        callback(sources[0] ? { video: sources[0], audio: 'loopback' } : {})
-      })
-    })
     const win = new BrowserWindow({
       show: false,
       webPreferences: {
@@ -190,6 +251,11 @@ export class WindowsBackend implements CaptureBackend {
       }
     })
     this.audioWindow = win
+    // Keep the page's warnings (a microphone that fails to open) in the main log.
+    win.webContents.on('console-message', ({ level, message }) => {
+      if (level === 'warning' || level === 'error') console.warn(message)
+      else if (message.startsWith('[capture]')) console.log(message)
+    })
     await new Promise<void>((resolve) => {
       win.webContents.once('did-finish-load', () => resolve())
       loadRendererPage(win, 'capture')
@@ -238,10 +304,17 @@ export class WindowsBackend implements CaptureBackend {
       for (const codec of ['hevc', 'av1'] as VideoCodec[])
         if (await works(this.vendor, codec)) codecs.push(codec)
     }
-    const audioDevices = await this.call<AudioDevice[]>('window.captureAgent.listDevices()').catch(() => [
-      { id: 'default_output', label: 'All system audio', kind: 'output' as const },
+    const outputs = await exec(helperPath(), ['list'], { timeout: 10_000 }).then(
+      ({ stdout }) => parseOutputDevices(stdout),
+      (error: Error) => {
+        console.warn('[capture] could not list output devices:', error.message)
+        return parseOutputDevices('')
+      }
+    )
+    const inputs = await this.call<AudioDevice[]>('window.captureAgent.listDevices()').catch(() => [
       { id: 'default_input', label: 'Default microphone', kind: 'input' as const }
     ])
+    const audioDevices = [...outputs, ...inputs]
     return {
       backend: 'ffmpeg',
       problem: null,
@@ -282,57 +355,69 @@ export class WindowsBackend implements CaptureBackend {
     await rm(this.segmentDir, { recursive: true, force: true })
     await mkdir(this.segmentDir, { recursive: true })
 
-    // Audio first: FFmpeg would wait forever on a pipe nobody writes to, so only started tracks get one.
-    const audio = await this.call<{ started: CaptureTrack[]; errors: string[] }>(
-      `window.captureAgent.start(${JSON.stringify({ desktop: Boolean(config.audio.desktop), mic: config.audio.mic })})`
-    ).catch((error: unknown) => ({ started: [] as CaptureTrack[], errors: [String(error)] }))
-    for (const error of audio.errors) console.warn('[capture] audio:', error)
-    const order: CaptureTrack[] = ['desktop', 'mic']
-    const pipes: string[] = []
-    for (const track of order.filter((t) => audio.started.includes(t)))
-      pipes.push(await this.audioPipe(track))
-    if (pipes.length) this.pacer = setInterval(() => this.pace(), PACE_MS)
-
-    const args = buildWindowsArgs({
-      capture: config.capture,
-      audio: config.audio,
-      outputIndex: Math.max(0, Number(config.monitor) || 0),
-      vendor: this.vendor!,
-      segmentDir: this.segmentDir,
-      audioPipes: pipes
-    })
-    console.log('[ffmpeg] starting:', this.ffmpeg!.path, args.join(' '))
-    const child = spawn(this.ffmpeg!.path, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
-    this.child = child
-    this.stopping = false
-    this.restartReason = null
-    this.stderr = ''
-    child.stderr?.on('data', (d: Buffer) => (this.stderr = (this.stderr + d.toString()).slice(-4000)))
-    const frames = new FrameWatch(performance.now())
-    child.stdout?.on('data', (d: Buffer) => frames.feed(d.toString(), performance.now()))
-    if (child.pid) await writeFile(pidFile(), String(child.pid)).catch(() => {})
-
-    await new Promise<void>((resolve, reject) => {
-      let settled = false
-      const settle = (error?: Error): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        if (error) reject(error)
-        else resolve()
+    // Anything that fails from here on must not leave the helper, the pacer or a pipe behind: the
+    // next start would find the pipe name taken.
+    try {
+      // Audio first: FFmpeg would wait forever on a pipe nobody writes to, so only started tracks get one.
+      // The desktop track always has one: while its helper is down, the pacer keeps it going as silence.
+      const pipes: string[] = []
+      if (config.audio.desktop) {
+        pipes.push(await this.audioPipe('desktop'))
+        this.startHelper(config.audio.desktop)
       }
-      const timer = setTimeout(() => settle(), 3000)
-      child.once('error', (error) => settle(error))
-      child.once('exit', (code) => {
-        const reason =
-          this.restartReason ?? (this.stderr.trim().split('\n').at(-1) || `FFmpeg exited with code ${code}`)
-        if (this.child === child) this.child = null
-        void this.cleanupAudio()
-        if (!settled) settle(new Error(reason))
-        else if (!this.stopping) for (const listener of this.exitListeners) listener(reason)
+      const mic = await this.call<{ started: CaptureTrack[]; errors: string[] }>(
+        `window.captureAgent.start(${JSON.stringify({ mic: config.audio.mic })})`
+      ).catch((error: unknown) => ({ started: [] as CaptureTrack[], errors: [String(error)] }))
+      for (const error of mic.errors) console.warn('[capture] audio:', error)
+      if (mic.started.includes('mic')) pipes.push(await this.audioPipe('mic'))
+      if (pipes.length) this.pacer = setInterval(() => this.pace(), PACE_MS)
+
+      const args = buildWindowsArgs({
+        capture: config.capture,
+        audio: config.audio,
+        outputIndex: Math.max(0, Number(config.monitor) || 0),
+        vendor: this.vendor!,
+        segmentDir: this.segmentDir,
+        audioPipes: pipes
       })
-    })
-    this.startWatchdog(frames)
+      console.log('[ffmpeg] starting:', this.ffmpeg!.path, args.join(' '))
+      const child = spawn(this.ffmpeg!.path, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      this.child = child
+      this.stopping = false
+      this.restartReason = null
+      this.stderr = ''
+      child.stderr?.on('data', (d: Buffer) => (this.stderr = (this.stderr + d.toString()).slice(-4000)))
+      const frames = new FrameWatch(performance.now())
+      child.stdout?.on('data', (d: Buffer) => frames.feed(d.toString(), performance.now()))
+      if (child.pid) await writeFile(pidFile(), String(child.pid)).catch(() => {})
+
+      await new Promise<void>((resolve, reject) => {
+        let settled = false
+        const settle = (error?: Error): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          if (error) reject(error)
+          else resolve()
+        }
+        const timer = setTimeout(() => settle(), 3000)
+        child.once('error', (error) => settle(error))
+        child.once('exit', (code) => {
+          const reason =
+            this.restartReason ?? (this.stderr.trim().split('\n').at(-1) || `FFmpeg exited with code ${code}`)
+          if (this.child === child) this.child = null
+          void this.cleanupAudio()
+          if (!settled) settle(new Error(reason))
+          else if (!this.stopping) for (const listener of this.exitListeners) listener(reason)
+        })
+      })
+      this.startWatchdog(frames)
+    } catch (error) {
+      if (this.child && this.child.exitCode === null) this.child.kill()
+      this.child = null
+      await this.cleanupAudio()
+      throw error
+    }
   }
 
   /** Restarts the recording when the video stops coming or Podium was frozen (sleep). */
@@ -365,6 +450,7 @@ export class WindowsBackend implements CaptureBackend {
     this.pacer = null
     if (this.watchdog) clearInterval(this.watchdog)
     this.watchdog = null
+    this.stopHelper()
     for (const { socket } of this.sockets.values()) socket.destroy()
     this.sockets.clear()
     for (const server of this.servers.splice(0)) server.close()

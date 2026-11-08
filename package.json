@@ -19,6 +19,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,html}\" \"tests/**/*.ts\" \"*.ts\"",
     "dist": "pnpm build && electron-builder",
     "dist:dir": "pnpm build && electron-builder --dir",
+    "build:audio": "cd native/podium-audio && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o ../../resources/win/podium-audio.exe .",
     "dist:pacman": "pnpm build && electron-builder --linux pacman",
     "dist:deb": "pnpm build && electron-builder --linux deb",
     "aur:publish": "packaging/aur/publish.sh"

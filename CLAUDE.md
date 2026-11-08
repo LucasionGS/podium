@@ -19,8 +19,9 @@ Stack and look are shared with Edion (`~/development/edion`); copy patterns from
   Stop it with SIGTERM and check that gsr, the binds and `$XDG_RUNTIME_DIR/podium-*` are gone.
 - The Windows engine can't run on Linux. `tests/e2e/windows-ring.test.ts` runs its exact FFmpeg arguments with
   a test pattern in place of ddagrab and FIFOs in place of the named pipes; keep it passing when touching
-  `src/core/capture/windows.ts`. The hidden audio page (`renderer/capture.html`) can be exercised on Linux with
-  the mic track (loopback is Windows-only in Chromium).
+  `src/core/capture/windows.ts`. The hidden audio page (`renderer/capture.html`) only captures the mic and can be
+  exercised on Linux. Desktop audio comes from `native/podium-audio` (Go, WASAPI loopback; `pnpm build:audio`),
+  which only runs on Windows: test it in the Windows VM.
 - `~/.config/Podium` may hold settings from an older prototype; `normalizeSettings` must keep accepting anything.
 
 ## Rules of the codebase

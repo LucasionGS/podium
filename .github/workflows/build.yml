@@ -94,6 +94,18 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - if: matrix.setup
         run: ${{ matrix.setup }}
+      # The desktop audio helper (native/podium-audio) ships with the Windows build.
+      - if: matrix.name == 'windows'
+        uses: actions/setup-go@v5
+        # No dependencies, so no go.sum to cache.
+        with: { go-version-file: native/podium-audio/go.mod, cache: false }
+      - if: matrix.name == 'windows'
+        working-directory: native/podium-audio
+        run: go vet ./... && go test ./...
+      - if: matrix.name == 'windows'
+        working-directory: native/podium-audio
+        run: go build -trimpath -ldflags "-s -w" -o ../../resources/win/podium-audio.exe .
+        env: { GOOS: windows, GOARCH: amd64, CGO_ENABLED: '0' }
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm exec electron-builder ${{ matrix.targets }} --publish never

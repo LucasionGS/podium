@@ -66,8 +66,10 @@ the AUR.
 
 FFmpeg grabs the monitor with Desktop Duplication (`ddagrab`, frames stay on the GPU) and encodes it with
 the first encoder that works on your machine (NVENC, AMF, Quick Sync, then x264) into a ring of one-second
-MPEG-TS segments on disk. FFmpeg has no system-audio loopback on Windows, so a hidden page captures it
-(and the microphone) through Chromium and streams raw PCM to FFmpeg over named pipes, one track each.
+MPEG-TS segments on disk. FFmpeg has no system-audio loopback on Windows, so desktop audio comes from
+`podium-audio.exe`, a small Go helper (`native/podium-audio`) that records the chosen output device, or
+whichever is the default, through WASAPI loopback. A hidden page captures the microphone through Chromium.
+Both stream raw PCM to FFmpeg over named pipes, one track each.
 Saving a clip joins the newest segments without re-encoding.
 
 ### Hotkeys on Wayland
@@ -87,6 +89,7 @@ pnpm test         # unit tests (src/core)
 pnpm test:e2e     # builds, then drives the app offscreen with a fake capture engine
 pnpm typecheck
 pnpm dist:pacman  # or dist:deb, or pnpm dist for the platform's default installer
+pnpm build:audio  # cross-compiles the Windows desktop audio helper (needs Go) before a Windows build
 ```
 
 `PODIUM_BACKEND=fake` swaps the capture engine for one that renders a test pattern with two audio tracks,

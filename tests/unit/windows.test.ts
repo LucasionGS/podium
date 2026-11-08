@@ -5,7 +5,9 @@ import {
   buildWindowsArgs,
   encoderName,
   FrameWatch,
+  helperCaptureArgs,
   MAX_SILENCE_FRAMES,
+  parseOutputDevices,
   parseRegValue,
   pickSegments,
   probeArgs,
@@ -14,6 +16,7 @@ import {
   SAMPLE_RATE,
   saveArgs,
   silenceDue,
+  takeFrames,
   videoEncodeArgs
 } from '@core/capture/windows'
 
@@ -171,5 +174,49 @@ HKEY_CURRENT_USER\\Software\\Valve\\Steam
     expect(parseRegValue(out, 'RunningAppID')).toBe(730)
     expect(parseRegValue(out, 'steampath')).toBe('c:/program files (x86)/steam')
     expect(parseRegValue(out, 'Missing')).toBeNull()
+  })
+})
+
+describe('desktop audio helper', () => {
+  const list = [
+    '{"id":"{0.0.0.00000000}.{5c201e7a}","name":"Speakers (Realtek(R) Audio)","default":false}',
+    '{"id":"{0.0.0.00000000}.{1f9b3276}","name":"Headset (Arctis 7)","default":true}',
+    'not json',
+    '{"name":"no id"}',
+    ''
+  ].join('\r\n')
+
+  it('lists the default output first, then every device', () => {
+    expect(parseOutputDevices(list)).toEqual([
+      { id: 'default_output', label: 'Default output (Headset (Arctis 7))', kind: 'output' },
+      { id: 'device:{0.0.0.00000000}.{5c201e7a}', label: 'Speakers (Realtek(R) Audio)', kind: 'output' },
+      {
+        id: 'device:{0.0.0.00000000}.{1f9b3276}',
+        label: 'Headset (Arctis 7) (current default)',
+        kind: 'output'
+      }
+    ])
+  })
+
+  it('still offers the default output when the helper lists nothing', () => {
+    expect(parseOutputDevices('')).toEqual([
+      { id: 'default_output', label: 'Default output', kind: 'output' }
+    ])
+  })
+
+  it('follows the default unless a device is picked', () => {
+    expect(helperCaptureArgs('default_output')).toEqual(['capture'])
+    expect(helperCaptureArgs('device:{0.0.0.00000000}.{1f9b3276}')).toEqual([
+      'capture',
+      '--device',
+      '{0.0.0.00000000}.{1f9b3276}'
+    ])
+  })
+
+  it('passes on whole frames and carries the rest', () => {
+    const [first, carry] = takeFrames(new Uint8Array(), new Uint8Array(13), 8)
+    expect([first.length, carry.length]).toEqual([8, 5])
+    const [second, rest] = takeFrames(carry, new Uint8Array(11), 8)
+    expect([second.length, rest.length]).toEqual([16, 0])
   })
 })

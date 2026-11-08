@@ -1,7 +1,7 @@
 /**
- * Hidden audio-capture page for the Windows engine. FFmpeg has no system-audio loopback input on
- * Windows, but Chromium does: this page captures the loopback and the microphone and streams raw
- * interleaved stereo float32 PCM at 48 kHz to main, which feeds it to FFmpeg over named pipes.
+ * Hidden audio-capture page for the Windows engine: captures the microphone and streams raw interleaved
+ * stereo float32 PCM at 48 kHz to main, which feeds it to FFmpeg over a named pipe. (Desktop audio comes
+ * from the `podium-audio` helper, which can record any output device; Chromium's loopback can't.)
  */
 import type { AudioDevice, CaptureTrack } from '@shared/ipc'
 
@@ -73,6 +73,7 @@ async function pipe(track: CaptureTrack, stream: MediaStream): Promise<Running> 
 const RAW = { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
 
 const agent = {
+  /** Microphones; outputs are listed by the helper. */
   async listDevices(): Promise<AudioDevice[]> {
     // Labels are only visible once the page may use the microphone; main grants that to this page.
     const devices = await navigator.mediaDevices.enumerateDevices().catch(() => [] as MediaDeviceInfo[])
@@ -80,7 +81,6 @@ const agent = {
       (d) => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications'
     )
     return [
-      { id: 'default_output', label: 'All system audio', kind: 'output' },
       { id: 'default_input', label: 'Default microphone', kind: 'input' },
       ...inputs.map((d, i): AudioDevice => ({
         id: `device:${d.deviceId}`,
@@ -90,24 +90,10 @@ const agent = {
     ]
   },
 
-  /** Starts the requested tracks; resolves with the ones that actually started, with errors for the rest. */
-  async start(config: {
-    desktop: boolean
-    mic: string | null
-  }): Promise<{ started: CaptureTrack[]; errors: string[] }> {
+  /** Starts the microphone; resolves with the tracks that started, with errors for the rest. */
+  async start(config: { mic: string | null }): Promise<{ started: CaptureTrack[]; errors: string[] }> {
     await agent.stop()
     const errors: string[] = []
-    if (config.desktop) {
-      try {
-        // Main answers this with the system audio loopback; the video track isn't needed.
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-        stream.getVideoTracks().forEach((t) => t.stop())
-        if (!stream.getAudioTracks().length) throw new Error('No system audio track')
-        running.push(await pipe('desktop', stream))
-      } catch (error) {
-        errors.push(`Desktop audio: ${String(error)}`)
-      }
-    }
     if (config.mic) {
       try {
         const deviceId = config.mic.startsWith('device:')
